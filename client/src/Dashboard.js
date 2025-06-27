@@ -1,4 +1,5 @@
 import React from 'react';
+import { AppBar, Toolbar, Typography, Button, Box, Container } from '@mui/material';
 
 function Dashboard() {
   const logout = () => {
@@ -7,11 +8,29 @@ function Dashboard() {
   };
 
   return (
-    <div style={{ textAlign: 'center', marginTop: '100px' }}>
-      <h1>👑 Welcome to EchoRoom Dashboard</h1>
-      <p>You are logged in!</p>
-      <button onClick={logout}>Logout</button>
-    </div>
+    <>
+      {/* 🧭 Navbar */}
+      <AppBar position="static" sx={{ backgroundColor: '#1e1e2f' }}>
+        <Toolbar>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            EchoRoom 🚀
+          </Typography>
+          <Button color="inherit" onClick={logout}>
+            Logout
+          </Button>
+        </Toolbar>
+      </AppBar>
+
+      {/* 📦 Main Content */}
+      <Container maxWidth="md" sx={{ mt: 6, textAlign: 'center' }}>
+        <Typography variant="h4" gutterBottom>
+          👑 Welcome to EchoRoom Dashboard
+        </Typography>
+        <Typography variant="body1">
+          You are successfully logged in.
+        </Typography>
+      </Container>
+    </>
   );
 }
 
