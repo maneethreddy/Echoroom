@@ -10,7 +10,20 @@ const UserSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    required: function() {
+      return !this.isGoogleUser; // Password only required for non-Google users
+    },
+  },
+  googleId: {
+    type: String,
+    sparse: true,
+  },
+  profilePicture: {
+    type: String,
+  },
+  isGoogleUser: {
+    type: Boolean,
+    default: false,
   },
 }, { timestamps: true });
 module.exports = mongoose.model("User", UserSchema);

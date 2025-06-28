@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Container, Box, TextField, Button, Typography } from '@mui/material';
+import { Container, Box, TextField, Button, Typography, Divider } from '@mui/material';
 import { motion } from 'framer-motion';
+import GoogleLoginButton from './components/GoogleLoginButton';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -36,6 +37,10 @@ const Register = () => {
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleGoogleError = (error) => {
+    alert(error);
   };
 
   return (
@@ -115,6 +120,18 @@ const Register = () => {
               </Button>
             </motion.div>
           </Box>
+          
+          <motion.div variants={itemVariants}>
+            <Divider sx={{ my: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                OR
+              </Typography>
+            </Divider>
+          </motion.div>
+          
+          <motion.div variants={itemVariants}>
+            <GoogleLoginButton onError={handleGoogleError} />
+          </motion.div>
         </motion.div>
       </Box>
     </Container>

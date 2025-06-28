@@ -4,6 +4,8 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 import { Container, Box, Typography, Paper, Tabs, Tab } from '@mui/material';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import { GOOGLE_CLIENT_ID } from './config/googleOAuth';
 
 function AuthTabs() {
   const [tab, setTab] = useState(1); // default to Login
@@ -39,16 +41,18 @@ function App() {
   const isAuthenticated = !!localStorage.getItem("token");
 
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/auth"} />} />
-        <Route path="/auth" element={<AuthTabs />} />
-        <Route
-          path="/dashboard"
-          element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
-        />
-      </Routes>
-    </Router>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <Router>
+        <Routes>
+          <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/auth"} />} />
+          <Route path="/auth" element={<AuthTabs />} />
+          <Route
+            path="/dashboard"
+            element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
+          />
+        </Routes>
+      </Router>
+    </GoogleOAuthProvider>
   );
 }
 
