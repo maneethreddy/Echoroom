@@ -42,16 +42,16 @@ function App() {
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/auth"} />} />
-          <Route path="/auth" element={<AuthTabs />} />
-          <Route
-            path="/dashboard"
-            element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
-          />
-        </Routes>
-      </Router>
+    <Router>
+      <Routes>
+        <Route path="/" element={<Navigate to={isAuthenticated ? "/dashboard" : "/auth"} />} />
+        <Route path="/auth" element={<AuthTabs />} />
+        <Route
+          path="/dashboard"
+          element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
+        />
+      </Routes>
+    </Router>
     </GoogleOAuthProvider>
   );
 }
