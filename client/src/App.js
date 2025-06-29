@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import Register from './Register';
 import Login from './Login';
 import Dashboard from './Dashboard';
+import RoomPage from './RoomPage';
 import { Container, Box, Typography, Paper, Tabs, Tab } from '@mui/material';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { GOOGLE_CLIENT_ID } from './config/googleOAuth';
 
@@ -37,6 +38,11 @@ function AuthTabs() {
   );
 }
 
+function RoomPageWrapper() {
+  const { roomId } = useParams();
+  return <RoomPage roomId={roomId} />;
+}
+
 function App() {
   const isAuthenticated = !!localStorage.getItem("token");
 
@@ -50,6 +56,7 @@ function App() {
           path="/dashboard"
           element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
         />
+        <Route path="/room/:roomId" element={<RoomPageWrapper />} />
       </Routes>
     </Router>
     </GoogleOAuthProvider>

@@ -12,6 +12,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import DownloadIcon from '@mui/icons-material/Download';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 
 const ACCENT = '#e4572e';
 const CARD_BG = '#fafbfc';
@@ -56,6 +57,7 @@ const sharedFiles = [
 ];
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   // Extract user info from localStorage
   let user = { name: '', email: '', photo: '' };
   try {
@@ -73,6 +75,23 @@ export default function Dashboard() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.location.href = '/auth';
+  };
+
+  // Generate a random room ID
+  const generateRoomId = () => Math.random().toString(36).substring(2, 10);
+
+  // Handle Create Meeting click
+  const handleCreateMeeting = () => {
+    const roomId = generateRoomId();
+    navigate(`/room/${roomId}`);
+  };
+
+  // Handle Join Room click
+  const handleJoinRoom = () => {
+    const roomId = window.prompt('Enter Room ID to join:');
+    if (roomId && roomId.trim()) {
+      navigate(`/room/${roomId.trim()}`);
+    }
   };
 
   return (
@@ -114,6 +133,8 @@ export default function Dashboard() {
               {actions.map((action, i) => {
                 const Icon = action.icon;
                 const style = actionCardStyles[i];
+                const isCreateMeeting = i === 0;
+                const isJoinRoom = i === 1;
                 return (
                   <Grid item xs={12} sm={6} md={3} key={action.title}>
                     <motion.div
@@ -121,7 +142,8 @@ export default function Dashboard() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.12, duration: 0.5, type: 'spring' }}
                       whileHover={{ scale: 1.05, boxShadow: '0 8px 32px 0 rgba(60,60,60,0.10)' }}
-                      style={{ height: '100%' }}
+                      style={{ height: '100%', cursor: isCreateMeeting || isJoinRoom ? 'pointer' : 'default' }}
+                      onClick={isCreateMeeting ? handleCreateMeeting : isJoinRoom ? handleJoinRoom : undefined}
                     >
                       <Paper elevation={0} sx={{ p: 4, borderRadius: 3, background: CARD_BG, border: `1.5px solid ${BORDER}`, textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 170, transition: 'box-shadow 0.3s' }}>
                         <Box sx={{ mb: 2, width: 48, height: 48, borderRadius: 2, background: style.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px 0 rgba(60,60,60,0.08)' }}>
