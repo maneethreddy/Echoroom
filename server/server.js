@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const mongoose = require('mongoose');
 const { Server } = require("socket.io");
 const cors = require("cors");
 require("dotenv").config();
@@ -36,6 +37,7 @@ io.on("connection", (socket) => {
     // Save roomId and user on the socket for later use
     socket.roomId = roomId;
     socket.user = user;
+    console.log("Current users in room", roomId, rooms[roomId]);
   });
 
   // WebRTC signaling
@@ -71,6 +73,7 @@ io.on("connection", (socket) => {
       rooms[roomId] = rooms[roomId].filter(u => u.id !== socket.id);
       io.to(roomId).emit("participants", rooms[roomId]);
       if (rooms[roomId].length === 0) delete rooms[roomId];
+      console.log("After disconnect, users in room", roomId, rooms[roomId]);
     }
   });
 });

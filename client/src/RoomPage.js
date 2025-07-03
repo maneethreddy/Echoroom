@@ -13,7 +13,6 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SendIcon from '@mui/icons-material/Send';
 
 const SOCKET_SERVER_URL = 'http://localhost:8000';
-const socket = io(SOCKET_SERVER_URL);
 
 export default function RoomPage({ roomId }) {
   const [participants, setParticipants] = useState([]); // {id, name, photo, mic, cam}
@@ -26,57 +25,143 @@ export default function RoomPage({ roomId }) {
   const [chatInput, setChatInput] = useState('');
   const myVideo = useRef();
   const peersRef = useRef([]);
+  const socketRef = useRef();
   const user = JSON.parse(localStorage.getItem('user')) || { name: 'You', profilePicture: '' };
 
   // --- WebRTC & Socket.IO setup ---
   useEffect(() => {
     let mounted = true;
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-      setLocalStream(stream);
-      if (myVideo.current) myVideo.current.srcObject = stream;
-      socket.emit('join-room', { roomId, user: { name: user.name, photo: user.profilePicture } });
+    
+    // Initialize socket connection
+    socketRef.current = io(SOCKET_SERVER_URL);
+    const socket = socketRef.current;
+    
+    console.log('Connecting to room:', roomId);
+    
+    // Get user media and join room
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        if (!mounted) return;
+        console.log('Got local stream');
+        setLocalStream(stream);
+        if (myVideo.current) myVideo.current.srcObject = stream;
+        
+        // Join room after getting stream
+        socket.emit('join-room', { 
+          roomId, 
+          user: { name: user.name, photo: user.profilePicture } 
+        });
+      })
+      .catch(err => {
+        console.error('Error getting user media:', err);
+      });
+
+    // Socket event handlers
+    socket.on('participants', (users) => {
+      console.log('Received participants:', users);
+      if (mounted) {
+        setParticipants(users);
+        console.log("Participants state updated:", users);
+      }
     });
 
-    socket.on('participants', (users) => {
-      if (mounted) setParticipants(users);
-    });
     socket.on('chat-message', (msg) => {
+      console.log('Received chat message:', msg);
       if (mounted) setMessages(msgs => [...msgs, msg]);
     });
-    // WebRTC peer connection logic (simplified, assumes backend emits 'user-joined', 'receiving-returned-signal')
+
     socket.on('all-users', users => {
-      const peers = [];
+      console.log('Received all-users:', users);
+      if (!mounted || !localStream) return;
+      
+      // Clear existing peers
+      peersRef.current.forEach(peerObj => {
+        if (peerObj.peer) peerObj.peer.destroy();
+      });
+      peersRef.current = [];
+      
+      const newPeers = [];
       users.forEach(({ id, name, photo }) => {
+        console.log('Creating peer for user:', id, name);
         const peer = createPeer(id, socket.id, localStream);
         peersRef.current.push({ peerID: id, peer, name, photo });
-        peers.push({ peer, id, name, photo });
+        newPeers.push({ peer, id, name, photo });
       });
-      setPeers(peers);
+      setPeers(newPeers);
     });
+
     socket.on('user-joined', payload => {
+      console.log('User joined:', payload);
+      if (!mounted || !localStream) return;
+      
       const peer = addPeer(payload.signal, payload.callerID, localStream);
-      peersRef.current.push({ peerID: payload.callerID, peer, name: payload.name, photo: payload.photo });
-      setPeers(users => [...users, { peer, id: payload.callerID, name: payload.name, photo: payload.photo }]);
+      peersRef.current.push({ 
+        peerID: payload.callerID, 
+        peer, 
+        name: payload.name, 
+        photo: payload.photo 
+      });
+      setPeers(users => [...users, { 
+        peer, 
+        id: payload.callerID, 
+        name: payload.name, 
+        photo: payload.photo 
+      }]);
     });
+
     socket.on('receiving-returned-signal', payload => {
+      console.log('Receiving returned signal from:', payload.id);
       const item = peersRef.current.find(p => p.peerID === payload.id);
-      if (item) item.peer.signal(payload.signal);
+      if (item) {
+        item.peer.signal(payload.signal);
+      }
     });
-    return () => { mounted = false; socket.disconnect(); };
-    // eslint-disable-next-line
-  }, [roomId]);
+
+    // Cleanup function
+    return () => { 
+      console.log('Cleaning up RoomPage');
+      mounted = false;
+      
+      // Destroy all peers
+      peersRef.current.forEach(peerObj => {
+        if (peerObj.peer) peerObj.peer.destroy();
+      });
+      peersRef.current = [];
+      
+      // Stop local stream
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Disconnect socket
+      if (socket) {
+        socket.disconnect();
+      }
+    };
+  }, [roomId, user.name, user.profilePicture]);
 
   function createPeer(userToSignal, callerID, stream) {
-    const peer = new Peer({ initiator: true, trickle: false, stream });
+    console.log('Creating peer for:', userToSignal);
+    const peer = new Peer({ initiator: true, trickle: false, stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
     peer.on('signal', signal => {
-      socket.emit('sending-signal', { userToSignal, callerID, signal });
+      console.log('Sending signal to:', userToSignal);
+      socketRef.current.emit('sending-signal', { userToSignal, callerID, signal });
+    });
+    peer.on('stream', stream => {
+      console.log('Received stream from peer:', userToSignal);
     });
     return peer;
   }
+
   function addPeer(incomingSignal, callerID, stream) {
-    const peer = new Peer({ initiator: false, trickle: false, stream });
+    console.log('Adding peer for:', callerID);
+    const peer = new Peer({ initiator: false, trickle: false, stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
     peer.on('signal', signal => {
-      socket.emit('returning-signal', { signal, callerID });
+      console.log('Returning signal to:', callerID);
+      socketRef.current.emit('returning-signal', { signal, callerID });
+    });
+    peer.on('stream', stream => {
+      console.log('Received stream from new peer:', callerID);
     });
     peer.signal(incomingSignal);
     return peer;
@@ -100,7 +185,7 @@ export default function RoomPage({ roomId }) {
   const handleSendMessage = () => {
     if (chatInput.trim()) {
       const msg = { sender: user.name, text: chatInput, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-      socket.emit('chat-message', msg);
+      socketRef.current.emit('chat-message', msg);
       setMessages(msgs => [...msgs, msg]);
       setChatInput('');
     }
@@ -148,7 +233,18 @@ export default function RoomPage({ roomId }) {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 2 }}>
           <Paper sx={{ width: '100%', maxWidth: 800, aspectRatio: '16/9', mb: 2, position: 'relative', overflow: 'hidden', borderRadius: 3 }}>
             {/* Main video stream here */}
-            <video ref={myVideo} autoPlay muted style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#222' }} />
+            <video 
+              ref={myVideo} 
+              autoPlay 
+              muted 
+              playsInline
+              style={{ 
+                width: '100%', 
+                height: '100%', 
+                objectFit: 'cover', 
+                background: '#222' 
+              }} 
+            />
             <Box sx={{ position: 'absolute', top: 16, left: 16, bgcolor: '#fff', px: 2, py: 0.5, borderRadius: 2, fontWeight: 700, color: '#ef4444', display: 'flex', alignItems: 'center' }}>
               <StopCircleIcon sx={{ mr: 1, fontSize: 18 }} /> LIVE
             </Box>
@@ -244,14 +340,43 @@ export default function RoomPage({ roomId }) {
 
 function PeerVideo({ peer, name, photo }) {
   const ref = useRef();
+  
   useEffect(() => {
+    if (!peer) return;
+    
+    console.log('Setting up PeerVideo for:', name);
+    
     peer.on('stream', stream => {
-      if (ref.current) ref.current.srcObject = stream;
+      console.log('PeerVideo received stream for:', name);
+      if (ref.current) {
+        ref.current.srcObject = stream;
+      }
     });
-  }, [peer]);
+    
+    peer.on('error', err => {
+      console.error('Peer error for:', name, err);
+    });
+    
+    return () => {
+      console.log('Cleaning up PeerVideo for:', name);
+    };
+  }, [peer, name]);
+  
   return (
     <Paper sx={{ p: 0.5, borderRadius: 2, minWidth: 140, textAlign: 'center', bgcolor: '#fff' }}>
-      <video ref={ref} autoPlay style={{ width: 120, height: 90, borderRadius: 8, background: '#222', marginBottom: 4 }} />
+      <video 
+        ref={ref} 
+        autoPlay 
+        playsInline
+        style={{ 
+          width: 120, 
+          height: 90, 
+          borderRadius: 8, 
+          background: '#222', 
+          marginBottom: 4,
+          objectFit: 'cover'
+        }} 
+      />
       <Avatar src={photo} sx={{ mx: 'auto', mb: 1, width: 32, height: 32 }} />
       <Typography fontWeight={700} fontSize={14}>{name}</Typography>
     </Paper>
