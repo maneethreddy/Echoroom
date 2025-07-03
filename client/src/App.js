@@ -3,6 +3,7 @@ import Register from './Register';
 import Login from './Login';
 import Dashboard from './Dashboard';
 import RoomPage from './RoomPage';
+import ScheduleMeeting from './components/ScheduleMeeting';
 import { Container, Box, Typography, Paper, Tabs, Tab } from '@mui/material';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
@@ -88,6 +89,7 @@ function App() {
           element={isAuthenticated ? <Dashboard /> : <Navigate to="/auth" />}
         />
         <Route path="/room/:roomId" element={<RoomPageWrapper />} />
+        <Route path="/schedule" element={<ScheduleMeeting />} />
       </Routes>
     </Router>
     </GoogleOAuthProvider>
