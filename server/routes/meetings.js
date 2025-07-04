@@ -82,8 +82,17 @@ router.post("/", authenticateToken, async (req, res) => {
       hour = 0;
     }
 
-    const scheduledDate = new Date(date);
-    scheduledDate.setHours(hour, parseInt(minutes), 0, 0);
+    // Use all date components to avoid timezone issues
+    const [year, month, day] = date.split('-').map(Number);
+    const scheduledDate = new Date(year, month - 1, day, hour, parseInt(minutes), 0, 0);
+
+    console.log("Date parsing debug:");
+    console.log("Input date:", date);
+    console.log("Input time:", time);
+    console.log("Input ampm:", ampm);
+    console.log("Parsed scheduledDate:", scheduledDate);
+    console.log("Current date:", new Date());
+    console.log("Is scheduledDate in past?", scheduledDate < new Date());
 
     // Check if meeting is in the past
     if (scheduledDate < new Date()) {
@@ -102,11 +111,15 @@ router.post("/", authenticateToken, async (req, res) => {
     let attempts = 0;
     const maxAttempts = 10;
     
+    console.log("Generating meeting ID...");
+    
     while (!isUnique && attempts < maxAttempts) {
       meetingId = Math.floor(100000 + Math.random() * 900000).toString();
+      console.log("Trying meeting ID:", meetingId);
       const existingMeeting = await Meeting.findOne({ meetingId });
       if (!existingMeeting) {
         isUnique = true;
+        console.log("Meeting ID is unique:", meetingId);
       }
       attempts++;
     }
@@ -114,7 +127,22 @@ router.post("/", authenticateToken, async (req, res) => {
     if (!isUnique) {
       // Fallback: use timestamp + random number
       meetingId = Date.now().toString().slice(-6) + Math.floor(Math.random() * 100).toString().padStart(2, '0');
+      console.log("Using fallback meeting ID:", meetingId);
     }
+    
+    console.log("Final meeting ID:", meetingId);
+
+    console.log("Creating meeting with data:", {
+      topic,
+      meetingId,
+      password: password ? "***" : "undefined",
+      host,
+      hostId: req.user.id,
+      description,
+      scheduledDate,
+      timezone,
+      duration
+    });
 
     const meeting = new Meeting({
       topic,
@@ -128,7 +156,9 @@ router.post("/", authenticateToken, async (req, res) => {
       duration
     });
 
+    console.log("Meeting object created, saving...");
     await meeting.save();
+    console.log("Meeting saved successfully!");
 
     res.status(201).json({
       msg: "Meeting scheduled successfully",

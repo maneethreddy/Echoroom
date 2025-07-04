@@ -88,6 +88,7 @@ export default function RoomPage({ roomId }) {
         newPeers.push({ peer, id, name, photo });
       });
       setPeers(newPeers);
+      console.log('Created peers:', newPeers.length);
     });
 
     socket.on('user-joined', payload => {
@@ -95,25 +96,33 @@ export default function RoomPage({ roomId }) {
       if (!mounted || !localStream) return;
       
       const peer = addPeer(payload.signal, payload.callerID, localStream);
-      peersRef.current.push({ 
+      const newPeerObj = { 
         peerID: payload.callerID, 
         peer, 
         name: payload.name, 
         photo: payload.photo 
+      };
+      peersRef.current.push(newPeerObj);
+      setPeers(users => {
+        const updated = [...users, { 
+          peer, 
+          id: payload.callerID, 
+          name: payload.name, 
+          photo: payload.photo 
+        }];
+        console.log('Updated peers after user joined:', updated.length);
+        return updated;
       });
-      setPeers(users => [...users, { 
-        peer, 
-        id: payload.callerID, 
-        name: payload.name, 
-        photo: payload.photo 
-      }]);
     });
 
     socket.on('receiving-returned-signal', payload => {
       console.log('Receiving returned signal from:', payload.id);
       const item = peersRef.current.find(p => p.peerID === payload.id);
       if (item) {
+        console.log('Found peer for signal, applying signal to:', payload.id);
         item.peer.signal(payload.signal);
+      } else {
+        console.warn('Peer not found for signal from:', payload.id);
       }
     });
 
@@ -142,27 +151,73 @@ export default function RoomPage({ roomId }) {
 
   function createPeer(userToSignal, callerID, stream) {
     console.log('Creating peer for:', userToSignal);
-    const peer = new Peer({ initiator: true, trickle: false, stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+    const peer = new Peer({ 
+      initiator: true, 
+      trickle: false, 
+      stream, 
+      config: { 
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ] 
+      } 
+    });
+    
     peer.on('signal', signal => {
       console.log('Sending signal to:', userToSignal);
       socketRef.current.emit('sending-signal', { userToSignal, callerID, signal });
     });
+    
     peer.on('stream', stream => {
       console.log('Received stream from peer:', userToSignal);
+      // Find the peer video element and set the stream
+      const peerVideo = document.querySelector(`[data-peer-id="${userToSignal}"]`);
+      if (peerVideo) {
+        peerVideo.srcObject = stream;
+      }
     });
+    
+    peer.on('error', err => {
+      console.error('Peer error for:', userToSignal, err);
+    });
+    
     return peer;
   }
 
   function addPeer(incomingSignal, callerID, stream) {
     console.log('Adding peer for:', callerID);
-    const peer = new Peer({ initiator: false, trickle: false, stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+    const peer = new Peer({ 
+      initiator: false, 
+      trickle: false, 
+      stream, 
+      config: { 
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ] 
+      } 
+    });
+    
     peer.on('signal', signal => {
       console.log('Returning signal to:', callerID);
       socketRef.current.emit('returning-signal', { signal, callerID });
     });
+    
     peer.on('stream', stream => {
       console.log('Received stream from new peer:', callerID);
+      // Find the peer video element and set the stream
+      const peerVideo = document.querySelector(`[data-peer-id="${callerID}"]`);
+      if (peerVideo) {
+        peerVideo.srcObject = stream;
+      }
     });
+    
+    peer.on('error', err => {
+      console.error('Peer error for:', callerID, err);
+    });
+    
     peer.signal(incomingSignal);
     return peer;
   }
@@ -255,7 +310,7 @@ export default function RoomPage({ roomId }) {
           {/* Gallery */}
           <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
             {peers.map((peerObj, i) => (
-              <PeerVideo key={peerObj.id} peer={peerObj.peer} name={peerObj.name} photo={peerObj.photo} />
+              <PeerVideo key={peerObj.id} peer={peerObj.peer} name={peerObj.name} photo={peerObj.photo} id={peerObj.id} />
             ))}
           </Stack>
           {/* Controls */}
@@ -338,34 +393,40 @@ export default function RoomPage({ roomId }) {
   );
 }
 
-function PeerVideo({ peer, name, photo }) {
+function PeerVideo({ peer, name, photo, id }) {
   const ref = useRef();
   
   useEffect(() => {
     if (!peer) return;
     
-    console.log('Setting up PeerVideo for:', name);
+    console.log('Setting up PeerVideo for:', name, 'with ID:', id);
     
     peer.on('stream', stream => {
-      console.log('PeerVideo received stream for:', name);
+      console.log('PeerVideo received stream for:', name, 'ID:', id);
       if (ref.current) {
         ref.current.srcObject = stream;
+        console.log('Stream set for video element:', name);
       }
     });
     
     peer.on('error', err => {
-      console.error('Peer error for:', name, err);
+      console.error('Peer error for:', name, 'ID:', id, err);
+    });
+    
+    peer.on('connect', () => {
+      console.log('Peer connected for:', name, 'ID:', id);
     });
     
     return () => {
-      console.log('Cleaning up PeerVideo for:', name);
+      console.log('Cleaning up PeerVideo for:', name, 'ID:', id);
     };
-  }, [peer, name]);
+  }, [peer, name, id]);
   
   return (
     <Paper sx={{ p: 0.5, borderRadius: 2, minWidth: 140, textAlign: 'center', bgcolor: '#fff' }}>
       <video 
         ref={ref} 
+        data-peer-id={id}
         autoPlay 
         playsInline
         style={{ 
