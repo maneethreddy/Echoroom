@@ -82,19 +82,55 @@ app.get("/", (req, res) => {
   res.send("EchoRoom backend is alive!");
 });
 const authRoutes = require("./routes/auth");
+const meetingRoutes = require("./routes/meetings");
 app.use("/api/auth", authRoutes);
+app.use("/api/meetings", meetingRoutes);
 
 const PORT = process.env.PORT || 8000;
-server.listen(PORT, () => {
-  console.log(`Socket.IO server running on port ${PORT}`);
+
+// Connect to MongoDB first, then start the server
+async function startServer() {
+  try {
+    // Check if MONGO_URI is set
+    if (!process.env.MONGO_URI) {
+      console.error("❌ MONGO_URI environment variable is not set!");
+      console.log("Please set MONGO_URI in your .env file");
+      console.log("Example: MONGO_URI=mongodb://localhost:27017/echoroom");
+      process.exit(1);
+    }
+
+    console.log("🔌 Connecting to MongoDB...");
+    await mongoose.connect(process.env.MONGO_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("✅ Connected to MongoDB successfully!");
+
+    // Start the server after MongoDB connects
+    server.listen(PORT, () => {
+      console.log(`🚀 EchoRoom server running on port ${PORT}`);
+      console.log(`📡 Socket.IO server ready for connections`);
+      console.log(`🔗 API endpoints available at http://localhost:${PORT}/api`);
+    });
+
+  } catch (err) {
+    console.error("❌ MongoDB connection error:", err.message);
+    console.log("Please check your MONGO_URI and ensure MongoDB is running");
+    process.exit(1);
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down server...');
+  try {
+    await mongoose.connection.close();
+    console.log('✅ MongoDB connection closed');
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ Error during shutdown:', err);
+    process.exit(1);
+  }
 });
 
-mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => {
-    console.log(`✅ EchoRoom server running on port ${PORT}`);
-  })
-  .catch((err) => console.log("Mongo Error:", err));
+startServer();

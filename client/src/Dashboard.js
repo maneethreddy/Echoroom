@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  AppBar, Toolbar, Typography, Button, Box, Container, Avatar, Paper, Grid, Stack, IconButton
+  AppBar, Toolbar, Typography, Button, Box, Container, Avatar, Paper, Grid, Stack, IconButton,
+  Alert, Snackbar, CircularProgress
 } from '@mui/material';
 import VideoCameraFrontIcon from '@mui/icons-material/VideoCameraFront';
 import LinkIcon from '@mui/icons-material/Link';
@@ -13,6 +14,7 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import DownloadIcon from '@mui/icons-material/Download';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 const ACCENT = '#e4572e';
 const CARD_BG = '#fafbfc';
@@ -44,6 +46,7 @@ const actions = [
   },
 ];
 
+// Placeholder for recent meetings - will be replaced with real data
 const recentMeetings = [
   { title: 'Team Standup', room: 'echo-team-001', time: 'Yesterday, 10:30 AM' },
   { title: 'Client Presentation', room: 'echo-client-042', time: 'Dec 28, 2:15 PM' },
@@ -58,6 +61,10 @@ const sharedFiles = [
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [scheduledMeetings, setScheduledMeetings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  
   // Extract user info from localStorage
   let user = { name: '', email: '', photo: '' };
   try {
@@ -93,6 +100,38 @@ export default function Dashboard() {
       navigate(`/room/${roomId.trim()}`);
     }
   };
+
+  // Handle Schedule Meeting click
+  const handleScheduleMeeting = () => {
+    navigate('/schedule');
+  };
+
+  // Fetch scheduled meetings
+  const fetchScheduledMeetings = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+
+      const response = await axios.get('http://localhost:8000/api/meetings', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      setScheduledMeetings(response.data);
+    } catch (err) {
+      console.error('Error fetching meetings:', err);
+    }
+  };
+
+  // Show snackbar notification
+  const showSnackbar = (message, severity = 'success') => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  // Load scheduled meetings on component mount
+  useEffect(() => {
+    fetchScheduledMeetings();
+  }, []);
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: MAIN_BG, p: { xs: 0, md: 3 } }}>
@@ -135,6 +174,7 @@ export default function Dashboard() {
                 const style = actionCardStyles[i];
                 const isCreateMeeting = i === 0;
                 const isJoinRoom = i === 1;
+                const isScheduleMeeting = i === 3;
                 return (
                   <Grid item xs={12} sm={6} md={3} key={action.title}>
                     <motion.div
@@ -142,8 +182,8 @@ export default function Dashboard() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.12, duration: 0.5, type: 'spring' }}
                       whileHover={{ scale: 1.05, boxShadow: '0 8px 32px 0 rgba(60,60,60,0.10)' }}
-                      style={{ height: '100%', cursor: isCreateMeeting || isJoinRoom ? 'pointer' : 'default' }}
-                      onClick={isCreateMeeting ? handleCreateMeeting : isJoinRoom ? handleJoinRoom : undefined}
+                      style={{ height: '100%', cursor: isCreateMeeting || isJoinRoom || isScheduleMeeting ? 'pointer' : 'default' }}
+                      onClick={isCreateMeeting ? handleCreateMeeting : isJoinRoom ? handleJoinRoom : isScheduleMeeting ? handleScheduleMeeting : undefined}
                     >
                       <Paper elevation={0} sx={{ p: 4, borderRadius: 3, background: CARD_BG, border: `1.5px solid ${BORDER}`, textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 170, transition: 'box-shadow 0.3s' }}>
                         <Box sx={{ mb: 2, width: 48, height: 48, borderRadius: 2, background: style.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px 0 rgba(60,60,60,0.08)' }}>
@@ -158,28 +198,94 @@ export default function Dashboard() {
               })}
             </Grid>
 
-            {/* Recent Meetings Section Card */}
+            {/* Scheduled Meetings Section Card */}
             <Paper elevation={0} sx={{ borderRadius: 3, p: 3, background: CARD_BG, border: `1.5px solid ${BORDER}`, mb: 4 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <NotesIcon sx={{ color: TEXT_DARK, mr: 1 }} />
-                <Typography variant="h6" sx={{ color: TEXT_DARK, fontWeight: 700, fontSize: 20 }}>
-                  Recent Meetings
-                </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <EventIcon sx={{ color: TEXT_DARK, mr: 1 }} />
+                  <Typography variant="h6" sx={{ color: TEXT_DARK, fontWeight: 700, fontSize: 20 }}>
+                    Scheduled Meetings
+                  </Typography>
+                </Box>
+                <Button 
+                  variant="outlined" 
+                  size="small" 
+                  onClick={handleScheduleMeeting}
+                  sx={{ 
+                    color: PURPLE, 
+                    borderColor: PURPLE, 
+                    borderRadius: 2, 
+                    fontWeight: 600, 
+                    textTransform: 'none',
+                    '&:hover': { bgcolor: PURPLE, color: 'white' }
+                  }}
+                >
+                  + Schedule New
+                </Button>
               </Box>
-              <Grid container spacing={2}>
-                {recentMeetings.map((meeting, i) => (
-                  <Grid item xs={12} sm={4} key={meeting.title}>
-                    <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, background: '#fff', border: `1.5px solid ${BORDER}`, height: '100%' }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: TEXT_DARK, mb: 0.5 }}>{meeting.title}</Typography>
-                      <Typography variant="body2" sx={{ color: TEXT_GRAY, fontWeight: 500 }}>Room ID: {meeting.room}</Typography>
-                      <Typography variant="body2" sx={{ color: TEXT_GRAY, mb: 1, fontWeight: 500 }}>{meeting.time}</Typography>
-                      <Button variant="contained" size="small" sx={{ bgcolor: PURPLE, color: 'white', borderRadius: 2, fontWeight: 700, textTransform: 'none', boxShadow: 0, px: 2.5, '&:hover': { bgcolor: '#5a53c2' } }}>
-                        View Notes
-                      </Button>
-                    </Paper>
-                  </Grid>
-                ))}
-              </Grid>
+              
+              {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : scheduledMeetings.length > 0 ? (
+                <Grid container spacing={2}>
+                  {scheduledMeetings.slice(0, 3).map((meeting) => (
+                    <Grid item xs={12} sm={4} key={meeting._id}>
+                      <Paper elevation={0} sx={{ p: 2.5, borderRadius: 3, background: '#fff', border: `1.5px solid ${BORDER}`, height: '100%' }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: TEXT_DARK, mb: 0.5 }}>
+                          {meeting.topic}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: TEXT_GRAY, fontWeight: 500 }}>
+                          Meeting ID: {meeting.meetingId}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: TEXT_GRAY, mb: 1, fontWeight: 500 }}>
+                          {new Date(meeting.scheduledDate).toLocaleDateString()} at {new Date(meeting.scheduledDate).toLocaleTimeString()}
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: TEXT_GRAY, mb: 1, fontWeight: 500 }}>
+                          Duration: {meeting.duration}
+                        </Typography>
+                        <Button 
+                          variant="contained" 
+                          size="small" 
+                          sx={{ 
+                            bgcolor: PURPLE, 
+                            color: 'white', 
+                            borderRadius: 2, 
+                            fontWeight: 700, 
+                            textTransform: 'none', 
+                            boxShadow: 0, 
+                            px: 2.5, 
+                            '&:hover': { bgcolor: '#5a53c2' } 
+                          }}
+                          onClick={() => navigate(`/room/${meeting.meetingId}`)}
+                        >
+                          Join Meeting
+                        </Button>
+                      </Paper>
+                    </Grid>
+                  ))}
+                </Grid>
+              ) : (
+                <Box sx={{ textAlign: 'center', py: 4 }}>
+                  <Typography variant="body1" sx={{ color: TEXT_GRAY, mb: 2 }}>
+                    No scheduled meetings yet
+                  </Typography>
+                  <Button 
+                    variant="contained" 
+                    onClick={handleScheduleMeeting}
+                    sx={{ 
+                      bgcolor: PURPLE, 
+                      color: 'white', 
+                      borderRadius: 2, 
+                      fontWeight: 600,
+                      '&:hover': { bgcolor: '#5a53c2' }
+                    }}
+                  >
+                    Schedule Your First Meeting
+                  </Button>
+                </Box>
+              )}
             </Paper>
 
             {/* Shared Files Section Card */}
@@ -210,6 +316,22 @@ export default function Dashboard() {
           </Paper>
         </Box>
       </Container>
+
+      {/* Snackbar for notifications */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setSnackbar({ ...snackbar, open: false })} 
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
