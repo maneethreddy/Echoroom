@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const { Server } = require("socket.io");
 const cors = require("cors");
 require("dotenv").config();
-
+// Ensure you have a .env file with MONGO_URI set
 const app = express();
 app.use(cors());
 app.use(express.json());
