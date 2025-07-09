@@ -22,7 +22,7 @@ const SOCKET_SERVER_URL = 'http://localhost:8000';
 export default function RoomPage({ roomId }) {
   const [participants, setParticipants] = useState([]); // {id, name, photo, mic, cam}
   const [messages, setMessages] = useState([]); // {sender, text, time}
-  const [peers, setPeers] = useState([]); // [{peer, id, name, photo}]
+  const [peers, setPeers] = useState([]); // [{peerID, peer, name, photo, stream}]
   const [localStream, setLocalStream] = useState(null);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -88,22 +88,19 @@ export default function RoomPage({ roomId }) {
       });
       peersRef.current = [];
       
-      const newPeers = [];
       users.forEach(({ id, name, photo }) => {
         console.log('Creating peer for user:', id, name);
-        const peer = createPeer(id, socket.id, localStream);
+        const peer = createPeer(id, socket.id, localStream, name, photo);
         peersRef.current.push({ peerID: id, peer, name, photo });
-        newPeers.push({ peer, id, name, photo });
       });
-      setPeers(newPeers);
-      console.log('Created peers:', newPeers.length);
+      setPeers([]); // Will be filled as streams arrive
     });
 
     socket.on('user-joined', payload => {
       console.log('User joined:', payload);
       if (!mounted || !localStream) return;
       
-      const peer = addPeer(payload.signal, payload.callerID, localStream);
+      const peer = addPeer(payload.signal, payload.callerID, localStream, payload.name, payload.photo);
       const newPeerObj = { 
         peerID: payload.callerID, 
         peer, 
@@ -111,16 +108,6 @@ export default function RoomPage({ roomId }) {
         photo: payload.photo 
       };
       peersRef.current.push(newPeerObj);
-      setPeers(users => {
-        const updated = [...users, { 
-          peer, 
-          id: payload.callerID, 
-          name: payload.name, 
-          photo: payload.photo 
-        }];
-        console.log('Updated peers after user joined:', updated.length);
-        return updated;
-      });
     });
 
     socket.on('receiving-returned-signal', payload => {
@@ -157,75 +144,94 @@ export default function RoomPage({ roomId }) {
     };
   }, [roomId, user.name, user.profilePicture]);
 
-  function createPeer(userToSignal, callerID, stream) {
-    console.log('Creating peer for:', userToSignal);
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Public TURN server for testing (replace with your own for production)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ];
+
+  function createPeer(userToSignal, callerID, stream, name, photo) {
+    console.log('Creating peer for:', userToSignal, 'from', callerID);
     const peer = new Peer({ 
       initiator: true, 
       trickle: false, 
       stream, 
-      config: { 
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ] 
-      } 
+      config: { iceServers } 
     });
-    
+    // Attach all event handlers BEFORE signaling (for symmetry)
     peer.on('signal', signal => {
       console.log('Sending signal to:', userToSignal);
       socketRef.current.emit('sending-signal', { userToSignal, callerID, signal });
     });
-    
-    peer.on('stream', stream => {
-      console.log('Received stream from peer:', userToSignal);
-      // Find the peer video element and set the stream
-      const peerVideo = document.querySelector(`[data-peer-id="${userToSignal}"]`);
-      if (peerVideo) {
-        peerVideo.srcObject = stream;
-      }
+    peer.on('connect', () => {
+      console.log('Peer connection established with', userToSignal);
     });
-    
+    peer.on('close', () => {
+      console.log('Peer connection closed with', userToSignal);
+    });
     peer.on('error', err => {
       console.error('Peer error for:', userToSignal, err);
     });
-    
+    peer.on('stream', remoteStream => {
+      console.log('✅ Got remote stream from', userToSignal);
+      setPeers(prev => [...prev, { peerID: userToSignal, peer, name, photo, stream: remoteStream }]);
+      console.log('📹 stream tracks', remoteStream.getTracks());
+    });
+    peer.on('iceStateChange', (state) => {
+      console.log('ICE state changed for', userToSignal, ':', state);
+    });
+    peer.on('iceCandidate', (candidate) => {
+      console.log('ICE candidate for', userToSignal, ':', candidate);
+    });
+    peer.on('data', data => {
+      console.log('Data channel message from', userToSignal, ':', data);
+    });
     return peer;
   }
 
-  function addPeer(incomingSignal, callerID, stream) {
-    console.log('Adding peer for:', callerID);
+  function addPeer(incomingSignal, callerID, stream, name, photo) {
+    console.log('Adding peer for:', callerID, 'with signal', incomingSignal);
     const peer = new Peer({ 
       initiator: false, 
       trickle: false, 
       stream, 
-      config: { 
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
-        ] 
-      } 
+      config: { iceServers } 
     });
-    
+    // Attach all event handlers BEFORE signaling
     peer.on('signal', signal => {
       console.log('Returning signal to:', callerID);
       socketRef.current.emit('returning-signal', { signal, callerID });
     });
-    
-    peer.on('stream', stream => {
-      console.log('Received stream from new peer:', callerID);
-      // Find the peer video element and set the stream
-      const peerVideo = document.querySelector(`[data-peer-id="${callerID}"]`);
-      if (peerVideo) {
-        peerVideo.srcObject = stream;
-      }
+    peer.on('connect', () => {
+      console.log('Peer connection established with', callerID);
     });
-    
+    peer.on('close', () => {
+      console.log('Peer connection closed with', callerID);
+    });
     peer.on('error', err => {
       console.error('Peer error for:', callerID, err);
     });
-    
+    peer.on('stream', remoteStream => {
+      console.log('✅ Got remote stream from', callerID);
+      setPeers(prev => [...prev, { peerID: callerID, peer, name, photo, stream: remoteStream }]);
+      console.log('📹 stream tracks', remoteStream.getTracks());
+    });
+    peer.on('iceStateChange', (state) => {
+      console.log('ICE state changed for', callerID, ':', state);
+    });
+    peer.on('iceCandidate', (candidate) => {
+      console.log('ICE candidate for', callerID, ':', candidate);
+    });
+    peer.on('data', data => {
+      console.log('Data channel message from', callerID, ':', data);
+    });
+    // Now call .signal() after handlers are attached
     peer.signal(incomingSignal);
     return peer;
   }
@@ -453,7 +459,7 @@ export default function RoomPage({ roomId }) {
               </Typography>
               <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
                 {peers.map((peerObj, i) => (
-                  <PeerVideo key={peerObj.id} peer={peerObj.peer} name={peerObj.name} photo={peerObj.photo} id={peerObj.id} />
+                  <PeerVideo key={peerObj.peerID} stream={peerObj.stream} name={peerObj.name} photo={peerObj.photo} id={peerObj.peerID} />
                 ))}
               </Stack>
             </Box>
@@ -857,23 +863,21 @@ export default function RoomPage({ roomId }) {
   );
 }
 
-function PeerVideo({ peer, name, photo, id }) {
-  const ref = useRef();
-  
+function PeerVideo({ stream, name, photo, id }) {
+  const videoRef = useRef();
+
   useEffect(() => {
-    if (peer) {
-      peer.on('stream', stream => {
-        if (ref.current) {
-          ref.current.srcObject = stream;
-        }
-      });
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.error("❌ Video play failed", e));
+      console.log("✅ Remote video attached for:", name);
     }
-  }, [peer]);
+  }, [stream, name]);
 
   return (
     <Box sx={{ position: 'relative', borderRadius: 3, overflow: 'hidden', border: '2px solid rgba(255, 255, 255, 0.2)' }}>
       <video
-        ref={ref}
+        ref={videoRef}
         autoPlay
         playsInline
         data-peer-id={id}
