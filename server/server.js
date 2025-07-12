@@ -20,7 +20,7 @@ const io = new Server(server, {
 const rooms = {};
 // This will hold all active rooms and their participants
 io.on("connection", (socket) => {
-  console.log("New connection:", socket.id);
+  console.log("New connectionn:", socket.id);
   socket.on("join-room", ({ roomId, user }) => {
     console.log(`${user.name} joined room ${roomId} (${socket.id})`);
     socket.join(roomId);
