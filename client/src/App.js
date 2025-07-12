@@ -82,7 +82,7 @@ function AuthTabs() {
               }}
             >
               <Typography variant="h3" sx={{ color: 'white', fontWeight: 700 }}>
-                🎥
+                📹
               </Typography>
             </Box>
             <Typography 
