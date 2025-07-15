@@ -93,7 +93,7 @@ export default function RoomPage({ roomId }) {
         const peer = createPeer(id, socket.id, localStream, name, photo);
         peersRef.current.push({ peerID: id, peer, name, photo });
       });
-      setPeers([]); // Will be filled as streams arrive
+      // setPeers([]); // Removed: do not clear peers here to avoid race condition
     });
 
     socket.on('user-joined', payload => {
@@ -180,7 +180,12 @@ export default function RoomPage({ roomId }) {
     });
     peer.on('stream', remoteStream => {
       console.log('✅ Got remote stream from', userToSignal);
-      setPeers(prev => [...prev, { peerID: userToSignal, peer, name, photo, stream: remoteStream }]);
+      setPeers(prev => {
+        if (prev.some(p => p.peerID === userToSignal)) return prev;
+        const updated = [...prev, { peerID: userToSignal, peer, name, photo, stream: remoteStream }];
+        console.log('Updated peers:', updated);
+        return updated;
+      });
       console.log('📹 stream tracks', remoteStream.getTracks());
     });
     peer.on('iceStateChange', (state) => {
@@ -219,7 +224,12 @@ export default function RoomPage({ roomId }) {
     });
     peer.on('stream', remoteStream => {
       console.log('✅ Got remote stream from', callerID);
-      setPeers(prev => [...prev, { peerID: callerID, peer, name, photo, stream: remoteStream }]);
+      setPeers(prev => {
+        if (prev.some(p => p.peerID === callerID)) return prev;
+        const updated = [...prev, { peerID: callerID, peer, name, photo, stream: remoteStream }];
+        console.log('Updated peers:', updated);
+        return updated;
+      });
       console.log('📹 stream tracks', remoteStream.getTracks());
     });
     peer.on('iceStateChange', (state) => {
