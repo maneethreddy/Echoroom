@@ -19,64 +19,155 @@ const io = new Server(server, {
 
 const rooms = {};
 // This will hold all active rooms and their participants
+// Enhanced server.js - WebRTC signaling improvements
+// FIXED server.js - Prevent infinite signaling loops
 io.on("connection", (socket) => {
-  console.log("New connectionn:", socket.id);
+  console.log("🔌 New connection:", socket.id);
+  
   socket.on("join-room", ({ roomId, user }) => {
-    console.log(`${user.name} joined room ${roomId} (${socket.id})`);
+    console.log(`👋 ${user.name} (${socket.id}) joined room ${roomId}`);
+    
     socket.join(roomId);
-    if (!rooms[roomId]) rooms[roomId] = [];
+    
+    if (!rooms[roomId]) {
+      rooms[roomId] = [];
+    }
+    
+    // FIXED: Check if user already exists (prevent duplicates)
+    const existingUser = rooms[roomId].find(u => u.id === socket.id);
+    if (existingUser) {
+      console.log(`⚠️ User ${socket.id} already in room ${roomId}`);
+      return;
+    }
+    
     rooms[roomId].push({ id: socket.id, ...user });
 
-    // Send all other users to the new user for WebRTC
+    // Send existing users to the new user
     const otherUsers = rooms[roomId].filter(u => u.id !== socket.id);
+    console.log(`📤 Sending ${otherUsers.length} existing users to ${socket.id}`);
     socket.emit("all-users", otherUsers);
 
-    // Broadcast updated participants to everyone in the room
+    // Broadcast updated participants
+    console.log(`📡 Broadcasting participants to room ${roomId}`);
     io.to(roomId).emit("participants", rooms[roomId]);
 
-    // Save roomId and user on the socket for later use
     socket.roomId = roomId;
     socket.user = user;
-    console.log("Current users in room", roomId, rooms[roomId]);
+    
+    console.log(`📊 Room ${roomId} users: [${rooms[roomId].map(u => `${u.name}(${u.id})`).join(', ')}]`);
   });
 
-  // WebRTC signaling
+  // FIXED: Enhanced signaling with duplicate prevention
   socket.on("sending-signal", payload => {
-    console.log("sending-signal from", socket.id, "to", payload.userToSignal);
-    io.to(payload.userToSignal).emit("user-joined", {
-      signal: payload.signal,
-      callerID: socket.id,
-      name: socket.user?.name,
-      photo: socket.user?.photo
-    });
+    console.log(`📤 Signal: ${socket.id} -> ${payload.userToSignal} (${payload.signal.type})`);
+    
+    // Verify target user exists and is in the same room
+    const targetSocket = io.sockets.sockets.get(payload.userToSignal);
+    if (!targetSocket) {
+      console.warn(`⚠️ Target socket ${payload.userToSignal} not found`);
+      return;
+    }
+    
+    // Check if target is in same room
+    if (targetSocket.roomId !== socket.roomId) {
+      console.warn(`⚠️ Target ${payload.userToSignal} not in same room`);
+      return;
+    }
+    
+    // CRITICAL FIX: Only send user-joined for offers, not for ice candidates
+    if (payload.signal.type === 'offer') {
+      console.log(`✅ Sending OFFER to ${payload.userToSignal}`);
+      io.to(payload.userToSignal).emit("user-joined", {
+        signal: payload.signal,
+        callerID: socket.id,
+        name: socket.user?.name || 'Unknown',
+        photo: socket.user?.photo || ''
+      });
+    } else {
+      // For ICE candidates and other signals, use a different event
+      console.log(`📡 Forwarding ${payload.signal.type} to ${payload.userToSignal}`);
+      io.to(payload.userToSignal).emit("peer-signal", {
+        signal: payload.signal,
+        from: socket.id
+      });
+    }
   });
 
   socket.on("returning-signal", payload => {
-    console.log("returning-signal from", socket.id, "to", payload.callerID);
+    console.log(`📤 Return Signal: ${socket.id} -> ${payload.callerID} (${payload.signal.type})`);
+    
+    const callerSocket = io.sockets.sockets.get(payload.callerID);
+    if (!callerSocket) {
+      console.warn(`⚠️ Caller socket ${payload.callerID} not found`);
+      return;
+    }
+    
+    if (callerSocket.roomId !== socket.roomId) {
+      console.warn(`⚠️ Caller ${payload.callerID} not in same room`);
+      return;
+    }
+    
     io.to(payload.callerID).emit("receiving-returned-signal", {
       signal: payload.signal,
       id: socket.id
     });
+    
+    console.log(`✅ Sent return signal to ${payload.callerID}`);
   });
 
-  // Chat
   socket.on("chat-message", msg => {
     if (socket.roomId) {
-      io.to(socket.roomId).emit("chat-message", msg);
+      const messageWithUser = {
+        ...msg,
+        senderId: socket.id,
+        senderPhoto: socket.user?.photo
+      };
+      io.to(socket.roomId).emit("chat-message", messageWithUser);
+      console.log(`💬 Chat in ${socket.roomId}: ${msg.sender}: ${msg.text}`);
     }
   });
 
-  // Handle disconnect
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
+    console.log(`👋 User ${socket.id} disconnected (${reason})`);
+    
     const roomId = socket.roomId;
     if (roomId && rooms[roomId]) {
+      const beforeCount = rooms[roomId].length;
       rooms[roomId] = rooms[roomId].filter(u => u.id !== socket.id);
-      io.to(roomId).emit("participants", rooms[roomId]);
-      if (rooms[roomId].length === 0) delete rooms[roomId];
-      console.log("After disconnect, users in room", roomId, rooms[roomId]);
+      
+      console.log(`📊 Room ${roomId}: ${beforeCount} -> ${rooms[roomId].length} users`);
+      
+      if (rooms[roomId].length > 0) {
+        io.to(roomId).emit("participants", rooms[roomId]);
+        console.log(`📡 Updated participants sent to room ${roomId}`);
+      } else {
+        delete rooms[roomId];
+        console.log(`🧹 Deleted empty room ${roomId}`);
+      }
     }
   });
+
+  socket.on("error", (error) => {
+    console.error(`❌ Socket error for ${socket.id}:`, error);
+  });
 });
+
+// Add room monitoring
+setInterval(() => {
+  const roomCount = Object.keys(rooms).length;
+  const totalUsers = Object.values(rooms).reduce((sum, room) => sum + room.length, 0);
+  
+  if (roomCount > 0) {
+    console.log(`📊 Status: ${roomCount} rooms, ${totalUsers} users`);
+    
+    // Log individual room status
+    Object.entries(rooms).forEach(([roomId, users]) => {
+      if (users.length > 1) {
+        console.log(`🏠 Room ${roomId}: ${users.map(u => u.name).join(', ')}`);
+      }
+    });
+  }
+}, 30000);
 
 app.get("/", (req, res) => {
   res.send("EchoRoom backend is alive!");

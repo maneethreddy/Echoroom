@@ -37,109 +37,197 @@ export default function RoomPage({ roomId }) {
   const theme = useTheme();
 
   // --- WebRTC & Socket.IO setup ---
+  // FIXED: Complete solution to prevent infinite loops and video conflicts
   useEffect(() => {
     let mounted = true;
+    let socket = null;
     
-    // Initialize socket connection
-    socketRef.current = io(SOCKET_SERVER_URL);
-    const socket = socketRef.current;
+    socket = io(SOCKET_SERVER_URL);
+    socketRef.current = socket;
     
-    console.log('Connecting to room:', roomId);
+    console.log('🔌 Connecting to room:', roomId);
     
-    // Get user media and join room
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    navigator.mediaDevices.getUserMedia({ 
+      video: { width: 640, height: 480 }, 
+      audio: true 
+    })
       .then(stream => {
-        if (!mounted) return;
-        console.log('Got local stream');
-        setLocalStream(stream);
-        if (myVideo.current) myVideo.current.srcObject = stream;
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
         
-        // Join room after getting stream
+        console.log('📹 Got local stream with tracks:', stream.getTracks().map(t => t.kind));
+        setLocalStream(stream);
+        
+        if (myVideo.current) {
+          myVideo.current.srcObject = stream;
+          const playPromise = myVideo.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(e => {
+              if (e.name !== 'AbortError') {
+                console.error('Local video play failed:', e);
+              }
+            });
+          }
+        }
+        
         socket.emit('join-room', { 
           roomId, 
           user: { name: user.name, photo: user.profilePicture } 
         });
       })
       .catch(err => {
-        console.error('Error getting user media:', err);
+        console.error('❌ Error getting user media:', err);
+        alert('Camera/Microphone access required. Please refresh and allow permissions.');
       });
 
-    // Socket event handlers
     socket.on('participants', (users) => {
-      console.log('Received participants:', users);
+      console.log('👥 Received participants:', users);
       if (mounted) {
         setParticipants(users);
-        console.log("Participants state updated:", users);
       }
     });
 
     socket.on('chat-message', (msg) => {
-      console.log('Received chat message:', msg);
       if (mounted) setMessages(msgs => [...msgs, msg]);
     });
 
+    // FIXED: Handle all-users event with proper deduplication
     socket.on('all-users', users => {
-      console.log('Received all-users:', users);
-      if (!mounted || !localStream) return;
+      console.log('🔗 Received all-users:', users);
+      if (!mounted) return;
       
-      // Clear existing peers
+      const currentStream = myVideo.current?.srcObject;
+      if (!currentStream) {
+        console.warn('⚠️ Local stream not ready yet');
+        return;
+      }
+      
+      // Clear existing peers first
+      console.log('🧹 Clearing existing peers');
       peersRef.current.forEach(peerObj => {
-        if (peerObj.peer) peerObj.peer.destroy();
+        if (peerObj.peer) {
+          try {
+            peerObj.peer.destroy();
+          } catch (e) {
+            console.warn('Error destroying peer:', e);
+          }
+        }
       });
       peersRef.current = [];
+      setPeers([]);
       
+      // Create peers for all users
       users.forEach(({ id, name, photo }) => {
-        console.log('Creating peer for user:', id, name);
-        const peer = createPeer(id, socket.id, localStream, name, photo);
-        peersRef.current.push({ peerID: id, peer, name, photo });
+        console.log('🔨 Creating peer for user:', id, name);
+        try {
+          const peer = createPeer(id, socket.id, currentStream, name, photo);
+          peersRef.current.push({ peerID: id, peer, name, photo });
+        } catch (error) {
+          console.error('❌ Error creating peer for', id, ':', error);
+        }
       });
-      // setPeers([]); // Removed: do not clear peers here to avoid race condition
     });
 
+    // FIXED: Handle user-joined with deduplication
     socket.on('user-joined', payload => {
-      console.log('User joined:', payload);
-      if (!mounted || !localStream) return;
+      console.log('👋 User joined:', payload.callerID, payload.name);
+      if (!mounted) return;
       
-      const peer = addPeer(payload.signal, payload.callerID, localStream, payload.name, payload.photo);
-      const newPeerObj = { 
-        peerID: payload.callerID, 
-        peer, 
-        name: payload.name, 
-        photo: payload.photo 
-      };
-      peersRef.current.push(newPeerObj);
+      // CRITICAL FIX: Check if we already have a peer for this user
+      const existingPeer = peersRef.current.find(p => p.peerID === payload.callerID);
+      if (existingPeer) {
+        console.log('⚠️ Peer already exists for:', payload.callerID, '- skipping');
+        return;
+      }
+      
+      const currentStream = myVideo.current?.srcObject;
+      if (!currentStream) {
+        console.warn('⚠️ Local stream not ready for new user');
+        return;
+      }
+      
+      try {
+        const peer = addPeer(payload.signal, payload.callerID, currentStream, payload.name, payload.photo);
+        
+        const newPeerObj = { 
+          peerID: payload.callerID, 
+          peer, 
+          name: payload.name, 
+          photo: payload.photo 
+        };
+        peersRef.current.push(newPeerObj);
+        console.log('✅ Added new peer to peersRef:', payload.callerID);
+        
+      } catch (error) {
+        console.error('❌ Error adding peer:', error);
+      }
     });
 
     socket.on('receiving-returned-signal', payload => {
-      console.log('Receiving returned signal from:', payload.id);
+      console.log('📡 Receiving returned signal from:', payload.id);
       const item = peersRef.current.find(p => p.peerID === payload.id);
-      if (item) {
-        console.log('Found peer for signal, applying signal to:', payload.id);
-        item.peer.signal(payload.signal);
+      if (item && item.peer) {
+        try {
+          item.peer.signal(payload.signal);
+          console.log('✅ Applied return signal to peer:', payload.id);
+        } catch (error) {
+          console.error('❌ Error applying return signal:', error);
+        }
       } else {
-        console.warn('Peer not found for signal from:', payload.id);
+        console.warn('⚠️ Peer not found for return signal from:', payload.id);
+      }
+    });
+
+    // Add peer-signal event handler
+    socket.on('peer-signal', payload => {
+      console.log('📡 Received peer signal from:', payload.from, 'Type:', payload.signal.type);
+      const item = peersRef.current.find(p => p.peerID === payload.from);
+      if (item && item.peer) {
+        try {
+          item.peer.signal(payload.signal);
+          console.log('✅ Applied peer signal from:', payload.from);
+        } catch (error) {
+          console.error('❌ Error applying peer signal:', error);
+        }
+      } else {
+        console.warn('⚠️ Peer not found for signal from:', payload.from);
       }
     });
 
     // Cleanup function
     return () => { 
-      console.log('Cleaning up RoomPage');
+      console.log('🧹 Cleaning up RoomPage');
       mounted = false;
       
-      // Destroy all peers
       peersRef.current.forEach(peerObj => {
-        if (peerObj.peer) peerObj.peer.destroy();
+        if (peerObj.peer) {
+          try {
+            peerObj.peer.destroy();
+          } catch (e) {
+            console.warn('Error destroying peer during cleanup:', e);
+          }
+        }
       });
       peersRef.current = [];
       
-      // Stop local stream
       if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        localStream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn('Error stopping track:', e);
+          }
+        });
       }
       
-      // Disconnect socket
       if (socket) {
-        socket.disconnect();
+        try {
+          socket.disconnect();
+        } catch (e) {
+          console.warn('Error disconnecting socket:', e);
+        }
       }
     };
   }, [roomId, user.name, user.profilePicture]);
@@ -156,93 +244,160 @@ export default function RoomPage({ roomId }) {
     }
   ];
 
+  // FIXED: Enhanced createPeer with deduplication protection
   function createPeer(userToSignal, callerID, stream, name, photo) {
-    console.log('Creating peer for:', userToSignal, 'from', callerID);
+    console.log('🔨 Creating peer for:', userToSignal, 'from', callerID);
+    console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+    
+    if (!stream || stream.getTracks().length === 0) {
+      throw new Error('No valid stream available for peer creation');
+    }
+    
     const peer = new Peer({ 
       initiator: true, 
-      trickle: false, 
+      trickle: true, 
       stream, 
-      config: { iceServers } 
+      config: { iceServers },
+      // Add these options for better compatibility
+      sdpSemantics: 'unified-plan'
     });
-    // Attach all event handlers BEFORE signaling (for symmetry)
+    
     peer.on('signal', signal => {
-      console.log('Sending signal to:', userToSignal);
-      socketRef.current.emit('sending-signal', { userToSignal, callerID, signal });
+      console.log('📤 Sending signal to:', userToSignal, 'Type:', signal.type);
+      try {
+        socketRef.current.emit('sending-signal', { userToSignal, callerID, signal });
+      } catch (error) {
+        console.error('❌ Error sending signal:', error);
+      }
     });
+    
     peer.on('connect', () => {
-      console.log('Peer connection established with', userToSignal);
+      console.log('🤝 Peer connection established with', userToSignal);
     });
+    
     peer.on('close', () => {
-      console.log('Peer connection closed with', userToSignal);
+      console.log('👋 Peer connection closed with', userToSignal);
+      setPeers(prev => prev.filter(p => p.peerID !== userToSignal));
     });
+    
     peer.on('error', err => {
-      console.error('Peer error for:', userToSignal, err);
+      console.error('❌ Peer error for:', userToSignal, err);
+      setPeers(prev => prev.filter(p => p.peerID !== userToSignal));
     });
+    
+    // CRITICAL FIX: Enhanced stream handling
     peer.on('stream', remoteStream => {
-      console.log('✅ Got remote stream from', userToSignal);
+      console.log('🎥 ✅ Got remote stream from', userToSignal);
+      console.log('📹 Remote stream tracks:', remoteStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+      
+      // Verify stream has tracks
+      if (remoteStream.getTracks().length === 0) {
+        console.warn('⚠️ Remote stream has no tracks');
+        return;
+      }
+      
+      // Update peers state with the stream
       setPeers(prev => {
-        if (prev.some(p => p.peerID === userToSignal)) return prev;
-        const updated = [...prev, { peerID: userToSignal, peer, name, photo, stream: remoteStream }];
-        console.log('Updated peers:', updated);
+        // Remove any existing peer with same ID to prevent duplicates
+        const filtered = prev.filter(p => p.peerID !== userToSignal);
+        const newPeer = { 
+          peerID: userToSignal, 
+          peer, 
+          name, 
+          photo, 
+          stream: remoteStream 
+        };
+        const updated = [...filtered, newPeer];
+        console.log('📊 Updated peers state:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
         return updated;
       });
-      console.log('📹 stream tracks', remoteStream.getTracks());
     });
+    
     peer.on('iceStateChange', (state) => {
-      console.log('ICE state changed for', userToSignal, ':', state);
+      console.log('🧊 ICE state changed for', userToSignal, ':', state);
     });
-    peer.on('iceCandidate', (candidate) => {
-      console.log('ICE candidate for', userToSignal, ':', candidate);
-    });
-    peer.on('data', data => {
-      console.log('Data channel message from', userToSignal, ':', data);
-    });
+    
     return peer;
   }
 
+  // FIXED: Enhanced addPeer with similar deduplication
   function addPeer(incomingSignal, callerID, stream, name, photo) {
-    console.log('Adding peer for:', callerID, 'with signal', incomingSignal);
+    console.log('➕ Adding peer for:', callerID, name);
+    console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+    
+    if (!stream || stream.getTracks().length === 0) {
+      throw new Error('No valid stream available for peer creation');
+    }
+    
     const peer = new Peer({ 
       initiator: false, 
-      trickle: false, 
+      trickle: true, 
       stream, 
-      config: { iceServers } 
+      config: { iceServers },
+      sdpSemantics: 'unified-plan'
     });
-    // Attach all event handlers BEFORE signaling
+    
     peer.on('signal', signal => {
-      console.log('Returning signal to:', callerID);
-      socketRef.current.emit('returning-signal', { signal, callerID });
+      console.log('📤 Returning signal to:', callerID, 'Type:', signal.type);
+      try {
+        socketRef.current.emit('returning-signal', { signal, callerID });
+      } catch (error) {
+        console.error('❌ Error returning signal:', error);
+      }
     });
+    
     peer.on('connect', () => {
-      console.log('Peer connection established with', callerID);
+      console.log('🤝 Peer connection established with', callerID);
     });
+    
     peer.on('close', () => {
-      console.log('Peer connection closed with', callerID);
+      console.log('👋 Peer connection closed with', callerID);
+      setPeers(prev => prev.filter(p => p.peerID !== callerID));
     });
+    
     peer.on('error', err => {
-      console.error('Peer error for:', callerID, err);
+      console.error('❌ Peer error for:', callerID, err);
+      setPeers(prev => prev.filter(p => p.peerID !== callerID));
     });
+    
+    // CRITICAL FIX: Enhanced stream handling for addPeer
     peer.on('stream', remoteStream => {
-      console.log('✅ Got remote stream from', callerID);
+      console.log('🎥 ✅ Got remote stream from', callerID);
+      console.log('📹 Remote stream tracks:', remoteStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+      
+      if (remoteStream.getTracks().length === 0) {
+        console.warn('⚠️ Remote stream has no tracks');
+        return;
+      }
+      
       setPeers(prev => {
-        if (prev.some(p => p.peerID === callerID)) return prev;
-        const updated = [...prev, { peerID: callerID, peer, name, photo, stream: remoteStream }];
-        console.log('Updated peers:', updated);
+        const filtered = prev.filter(p => p.peerID !== callerID);
+        const newPeer = { 
+          peerID: callerID, 
+          peer, 
+          name, 
+          photo, 
+          stream: remoteStream 
+        };
+        const updated = [...filtered, newPeer];
+        console.log('📊 Updated peers state:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
         return updated;
       });
-      console.log('📹 stream tracks', remoteStream.getTracks());
     });
+    
     peer.on('iceStateChange', (state) => {
-      console.log('ICE state changed for', callerID, ':', state);
+      console.log('🧊 ICE state changed for', callerID, ':', state);
     });
-    peer.on('iceCandidate', (candidate) => {
-      console.log('ICE candidate for', callerID, ':', candidate);
-    });
-    peer.on('data', data => {
-      console.log('Data channel message from', callerID, ':', data);
-    });
-    // Now call .signal() after handlers are attached
-    peer.signal(incomingSignal);
+    
+    // Signal after all handlers are attached
+    try {
+      peer.signal(incomingSignal);
+      console.log('📡 Applied incoming signal from:', callerID);
+    } catch (error) {
+      console.error('❌ Error signaling incoming peer:', error);
+      throw error;
+    }
+    
     return peer;
   }
 
@@ -873,31 +1028,117 @@ export default function RoomPage({ roomId }) {
   );
 }
 
+// FIXED: Enhanced PeerVideo component with proper video handling
 function PeerVideo({ stream, name, photo, id }) {
   const videoRef = useRef();
+  const [videoError, setVideoError] = useState(false);
 
   useEffect(() => {
+    console.log('🎬 PeerVideo useEffect for:', name, 'ID:', id);
+    console.log('📹 Stream available:', !!stream);
+    
     if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(e => console.error("❌ Video play failed", e));
-      console.log("✅ Remote video attached for:", name);
+      console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+      
+      // Check if stream has video tracks
+      const videoTracks = stream.getVideoTracks();
+      const audioTracks = stream.getAudioTracks();
+      
+      console.log('📊 Video tracks:', videoTracks.length, 'Audio tracks:', audioTracks.length);
+      
+      if (videoTracks.length === 0) {
+        console.warn('⚠️ No video tracks in stream for:', name);
+        setVideoError(true);
+        return;
+      }
+      
+      try {
+        videoRef.current.srcObject = stream;
+        
+        // Add event listeners
+        videoRef.current.onloadedmetadata = () => {
+          console.log('✅ Video metadata loaded for:', name);
+          setVideoError(false);
+        };
+        
+        videoRef.current.onerror = (e) => {
+          console.error('❌ Video error for:', name, e);
+          setVideoError(true);
+        };
+        
+        // Try to play
+        const playPromise = videoRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            console.log('▶️ Video playing for:', name);
+            setVideoError(false);
+          }).catch(e => {
+            if (e.name !== 'AbortError') {
+              console.error('❌ Video play failed for:', name, e);
+              setVideoError(true);
+            }
+          });
+        }
+          
+      } catch (error) {
+        console.error('❌ Error setting video source for:', name, error);
+        setVideoError(true);
+      }
+    } else {
+      console.warn('⚠️ Missing videoRef or stream for:', name);
+      setVideoError(true);
     }
-  }, [stream, name]);
+  }, [stream, name, id]);
 
   return (
-    <Box sx={{ position: 'relative', borderRadius: 3, overflow: 'hidden', border: '2px solid rgba(255, 255, 255, 0.2)' }}>
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        data-peer-id={id}
-        style={{
+    <Box sx={{ 
+      position: 'relative', 
+      borderRadius: 3, 
+      overflow: 'hidden', 
+      border: '2px solid rgba(255, 255, 255, 0.2)',
+      bgcolor: '#1e293b'
+    }}>
+      {videoError ? (
+        // Fallback when video fails
+        <Box sx={{
           width: 200,
           height: 150,
-          objectFit: 'cover',
-          background: '#1e293b'
-        }}
-      />
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          bgcolor: '#1e293b',
+          color: 'white'
+        }}>
+          <Avatar 
+            src={photo} 
+            sx={{ 
+              width: 60, 
+              height: 60, 
+              bgcolor: 'rgba(102, 126, 234, 0.8)',
+              mb: 1
+            }}
+          >
+            {name ? name[0] : '?'}
+          </Avatar>
+          <Typography variant="caption">Camera Off</Typography>
+        </Box>
+      ) : (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={false} // Don't mute remote videos
+          data-peer-id={id}
+          style={{
+            width: 200,
+            height: 150,
+            objectFit: 'cover',
+            background: '#1e293b'
+          }}
+        />
+      )}
+      
       <Box sx={{ 
         position: 'absolute', 
         bottom: 8, 
@@ -905,15 +1146,19 @@ function PeerVideo({ stream, name, photo, id }) {
         right: 8,
         display: 'flex',
         alignItems: 'center',
-        gap: 1
+        gap: 1,
+        bgcolor: 'rgba(0, 0, 0, 0.7)',
+        borderRadius: 2,
+        px: 1,
+        py: 0.5
       }}>
         <Avatar 
           src={photo} 
           sx={{ 
-            width: 24, 
-            height: 24, 
+            width: 20, 
+            height: 20, 
             bgcolor: 'rgba(102, 126, 234, 0.8)',
-            fontSize: 12
+            fontSize: 10
           }}
         >
           {name ? name[0] : '?'}
@@ -923,12 +1168,18 @@ function PeerVideo({ stream, name, photo, id }) {
           sx={{ 
             color: 'white', 
             fontWeight: 600,
-            textShadow: '0 1px 2px rgba(0, 0, 0, 0.8)',
-            flex: 1
+            flex: 1,
+            fontSize: 11
           }}
         >
           {name}
         </Typography>
+        <Box sx={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          bgcolor: videoError ? '#ef4444' : '#10b981'
+        }} />
       </Box>
     </Box>
   );
