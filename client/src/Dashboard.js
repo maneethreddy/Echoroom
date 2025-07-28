@@ -341,124 +341,61 @@ export default function Dashboard() {
             })}
           </Grid>
 
-          {/* Recent Activity & Files */}
-          <Grid container spacing={4}>
-            {/* Recent Meetings */}
-            <Grid item xs={12} md={6}>
-              <Paper 
-                elevation={0} 
-                sx={{ 
-                  p: 4, 
-                  borderRadius: 4, 
-                  background: CARD_BG,
-                  border: '1px solid rgba(226, 232, 240, 0.8)',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 700, color: TEXT_DARK }}>
-                    Recent Meetings
-                  </Typography>
-                  <Chip label={`${recentMeetings.length} meetings`} size="small" sx={{ bgcolor: 'rgba(102, 126, 234, 0.1)', color: ACCENT }} />
-                </Box>
-                <Stack spacing={2}>
-                  {recentMeetings.map((meeting, i) => (
-                    <Box 
-                      key={i} 
-                      sx={{ 
-                        p: 2, 
-                        borderRadius: 3, 
-                        bgcolor: 'rgba(248, 250, 252, 0.8)',
-                        border: '1px solid rgba(226, 232, 240, 0.6)',
-                        transition: 'all 0.2s ease',
-                        '&:hover': {
-                          bgcolor: 'rgba(102, 126, 234, 0.05)',
-                          borderColor: ACCENT
-                        }
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Box>
-                          <Typography fontWeight={600} color={TEXT_DARK}>
-                            {meeting.title}
-                          </Typography>
-                          <Typography variant="body2" color={TEXT_GRAY}>
-                            {meeting.time}
-                          </Typography>
-                        </Box>
-                        <Chip 
-                          label={meeting.status} 
-                          size="small" 
-                          sx={{ 
-                            bgcolor: meeting.status === 'completed' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(102, 126, 234, 0.1)',
-                            color: meeting.status === 'completed' ? '#10b981' : ACCENT
-                          }} 
-                        />
-                      </Box>
+          {/* Scheduled Meetings */}
+          <Paper 
+            elevation={0} 
+            sx={{ 
+              p: 4, 
+              borderRadius: 4, 
+              background: CARD_BG,
+              border: '1px solid rgba(226, 232, 240, 0.8)',
+              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: TEXT_DARK }}>
+                Scheduled Meetings
+              </Typography>
+              <Chip label={`${scheduledMeetings.length} meetings`} size="small" sx={{ bgcolor: 'rgba(102, 126, 234, 0.1)', color: ACCENT }} />
+            </Box>
+            <Stack spacing={2}>
+              {scheduledMeetings.map((meeting, i) => (
+                <Box 
+                  key={i} 
+                  sx={{ 
+                    p: 2, 
+                    borderRadius: 3, 
+                    bgcolor: 'rgba(248, 250, 252, 0.8)',
+                    border: '1px solid rgba(226, 232, 240, 0.6)',
+                    transition: 'all 0.2s ease',
+                    '&:hover': {
+                      bgcolor: 'rgba(102, 126, 234, 0.05)',
+                      borderColor: ACCENT
+                    }
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Box>
+                      <Typography fontWeight={600} color={TEXT_DARK}>
+                        {meeting.title}
+                      </Typography>
+                      <Typography variant="body2" color={TEXT_GRAY}>
+                        {meeting.time}
+                      </Typography>
                     </Box>
-                  ))}
-                </Stack>
-              </Paper>
-            </Grid>
-
-            {/* Shared Files */}
-            <Grid item xs={12} md={6}>
-              <Paper 
-                elevation={0} 
-                sx={{ 
-                  p: 4, 
-                  borderRadius: 4, 
-                  background: CARD_BG,
-                  border: '1px solid rgba(226, 232, 240, 0.8)',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 700, color: TEXT_DARK }}>
-                    Shared Files
-                  </Typography>
-                  <Chip label={`${sharedFiles.length} files`} size="small" sx={{ bgcolor: 'rgba(102, 126, 234, 0.1)', color: ACCENT }} />
-                </Box>
-                <Stack spacing={2}>
-                  {sharedFiles.map((file, i) => (
-                    <Box 
-                      key={i} 
+                    <Chip 
+                      label={meeting.status} 
+                      size="small" 
                       sx={{ 
-                        p: 2, 
-                        borderRadius: 3, 
-                        bgcolor: 'rgba(248, 250, 252, 0.8)',
-                        border: '1px solid rgba(226, 232, 240, 0.6)',
-                        transition: 'all 0.2s ease',
-                        '&:hover': {
-                          bgcolor: 'rgba(102, 126, 234, 0.05)',
-                          borderColor: ACCENT
-                        }
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                          <Box sx={{ mr: 2 }}>
-                            {file.icon}
-                          </Box>
-                          <Box>
-                            <Typography fontWeight={600} color={TEXT_DARK}>
-                              {file.name}
-                            </Typography>
-                            <Typography variant="body2" color={TEXT_GRAY}>
-                              {file.date} • {file.size}
-                            </Typography>
-                          </Box>
-                        </Box>
-                        <IconButton size="small" sx={{ color: TEXT_GRAY }}>
-                          <DownloadIcon />
-                        </IconButton>
-                      </Box>
-                    </Box>
-                  ))}
-                </Stack>
-              </Paper>
-            </Grid>
-          </Grid>
+                        bgcolor: meeting.status === 'completed' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(102, 126, 234, 0.1)',
+                        color: meeting.status === 'completed' ? '#10b981' : ACCENT
+                      }} 
+                    />
+                  </Box>
+                </Box>
+              ))}
+            </Stack>
+          </Paper>
         </Box>
       </Container>
 
