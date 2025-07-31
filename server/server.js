@@ -127,6 +127,26 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Screen sharing event handlers
+  socket.on("screen-share-started", data => {
+    if (socket.roomId) {
+      console.log(`🖥️ Screen sharing started by ${data.userName} in room ${data.roomId}`);
+      io.to(socket.roomId).emit("screen-share-started", {
+        userId: data.userId,
+        userName: data.userName
+      });
+    }
+  });
+
+  socket.on("screen-share-stopped", data => {
+    if (socket.roomId) {
+      console.log(`🖥️ Screen sharing stopped by ${data.userId} in room ${data.roomId}`);
+      io.to(socket.roomId).emit("screen-share-stopped", {
+        userId: data.userId
+      });
+    }
+  });
+
   socket.on("disconnect", (reason) => {
     console.log(`👋 User ${socket.id} disconnected (${reason})`);
     

@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 import Peer from 'simple-peer';
 import {
   Box, Avatar, Button, Typography, IconButton, Paper, Stack, TextField, Badge, Drawer,
-  Chip, Divider, useTheme
+  Chip, Divider, useTheme, Tooltip
 } from '@mui/material';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import MicIcon from '@mui/icons-material/Mic';
@@ -24,17 +24,24 @@ export default function RoomPage({ roomId }) {
   const [messages, setMessages] = useState([]); // {sender, text, time}
   const [peers, setPeers] = useState([]); // [{peerID, peer, name, photo, stream}]
   const [localStream, setLocalStream] = useState(null);
+  const [screenStream, setScreenStream] = useState(null);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isScreenSharingAvailable, setIsScreenSharingAvailable] = useState(false);
   const myVideo = useRef();
   const peersRef = useRef([]);
   const socketRef = useRef();
   const user = JSON.parse(localStorage.getItem('user')) || { name: 'You', profilePicture: '' };
   const theme = useTheme();
+
+  // Check if screen sharing is available
+  useEffect(() => {
+    setIsScreenSharingAvailable(!!navigator.mediaDevices.getDisplayMedia);
+  }, []);
 
   // --- WebRTC & Socket.IO setup ---
   // FIXED: Complete solution to prevent infinite loops and video conflicts
@@ -91,6 +98,31 @@ export default function RoomPage({ roomId }) {
 
     socket.on('chat-message', (msg) => {
       if (mounted) setMessages(msgs => [...msgs, msg]);
+    });
+
+    // Screen sharing event handlers
+    socket.on('screen-share-started', (data) => {
+      if (mounted) {
+        console.log('🖥️ Screen sharing started by:', data.userName);
+        setMessages(msgs => [...msgs, {
+          sender: 'System',
+          text: `${data.userName} started screen sharing`,
+          time: new Date().toLocaleTimeString(),
+          type: 'system'
+        }]);
+      }
+    });
+
+    socket.on('screen-share-stopped', (data) => {
+      if (mounted) {
+        console.log('🖥️ Screen sharing stopped by:', data.userId);
+        setMessages(msgs => [...msgs, {
+          sender: 'System',
+          text: 'Screen sharing stopped',
+          time: new Date().toLocaleTimeString(),
+          type: 'system'
+        }]);
+      }
     });
 
     // FIXED: Handle all-users event with proper deduplication
@@ -218,6 +250,17 @@ export default function RoomPage({ roomId }) {
             track.stop();
           } catch (e) {
             console.warn('Error stopping track:', e);
+          }
+        });
+      }
+      
+      // Clean up screen sharing stream
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn('Error stopping screen track:', e);
           }
         });
       }
@@ -431,9 +474,101 @@ export default function RoomPage({ roomId }) {
     window.location.href = '/';
   };
 
-  const handleScreenShare = () => {
-    setIsScreenSharing(!isScreenSharing);
-    // TODO: Implement screen sharing functionality
+  const handleScreenShare = async () => {
+    if (!isScreenSharingAvailable) {
+      alert('Screen sharing is not supported in your browser');
+      return;
+    }
+
+    if (isScreenSharing) {
+      // Stop screen sharing
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => track.stop());
+        setScreenStream(null);
+      }
+      setIsScreenSharing(false);
+      
+      // Switch back to camera stream
+      if (localStream && myVideo.current) {
+        myVideo.current.srcObject = localStream;
+      }
+      
+      // Notify other participants that screen sharing stopped
+      socketRef.current.emit('screen-share-stopped', { roomId, userId: user.id || 'user' });
+      
+      // Update all peers with camera stream
+      peersRef.current.forEach(peerObj => {
+        if (peerObj.peer && localStream) {
+          const videoTrack = localStream.getVideoTracks()[0];
+          const audioTrack = localStream.getAudioTracks()[0];
+          if (videoTrack) {
+            const sender = peerObj.peer.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(videoTrack);
+            }
+          }
+        }
+      });
+    } else {
+      // Start screen sharing
+      try {
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            cursor: 'always',
+            displaySurface: 'monitor'
+          },
+          audio: false // Most browsers don't support audio in screen sharing
+        });
+        
+        setScreenStream(displayStream);
+        setIsScreenSharing(true);
+        
+        // Switch video to screen stream
+        if (myVideo.current) {
+          myVideo.current.srcObject = displayStream;
+        }
+        
+        // Notify other participants that screen sharing started
+        socketRef.current.emit('screen-share-started', { 
+          roomId, 
+          userId: user.id || 'user',
+          userName: user.name 
+        });
+        
+        // Update all peers with screen stream
+        const screenVideoTrack = displayStream.getVideoTracks()[0];
+        const localAudioTrack = localStream?.getAudioTracks()[0];
+        
+        peersRef.current.forEach(peerObj => {
+          if (peerObj.peer) {
+            // Replace video track with screen track
+            const videoSender = peerObj.peer.getSenders().find(s => s.track?.kind === 'video');
+            if (videoSender && screenVideoTrack) {
+              videoSender.replaceTrack(screenVideoTrack);
+            }
+            
+            // Keep audio track from camera
+            const audioSender = peerObj.peer.getSenders().find(s => s.track?.kind === 'audio');
+            if (audioSender && localAudioTrack) {
+              audioSender.replaceTrack(localAudioTrack);
+            }
+          }
+        });
+        
+        // Handle screen sharing stop
+        displayStream.getVideoTracks()[0].onended = () => {
+          handleScreenShare(); // This will stop screen sharing
+        };
+        
+      } catch (error) {
+        console.error('Error starting screen share:', error);
+        if (error.name === 'NotAllowedError') {
+          alert('Screen sharing permission denied');
+        } else {
+          alert('Failed to start screen sharing: ' + error.message);
+        }
+      }
+    }
   };
 
   const handleRecording = () => {
@@ -597,6 +732,19 @@ export default function RoomPage({ roomId }) {
                   }} 
                 />
               )}
+              {isScreenSharing && (
+                <Chip 
+                  icon={<ScreenShareIcon />} 
+                  label="SCREEN SHARING" 
+                  size="small"
+                  sx={{ 
+                    bgcolor: '#10b981', 
+                    color: 'white', 
+                    fontWeight: 700,
+                    '& .MuiChip-icon': { color: 'white' }
+                  }} 
+                />
+              )}
             </Box>
             
             <Box sx={{ position: 'absolute', bottom: 16, left: 16 }}>
@@ -673,21 +821,28 @@ export default function RoomPage({ roomId }) {
                 <VideocamIcon />
               </IconButton>
               
-              <IconButton 
-                size="large" 
-                sx={{ 
-                  bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.2)' : 'rgba(102, 126, 234, 0.2)', 
-                  color: isScreenSharing ? '#10b981' : '#667eea',
-                  width: 56,
-                  height: 56,
-                  '&:hover': {
-                    bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.3)' : 'rgba(102, 126, 234, 0.3)'
-                  }
-                }}
-                onClick={handleScreenShare}
-              >
-                <ScreenShareIcon />
-              </IconButton>
+              <Tooltip title={isScreenSharingAvailable ? (isScreenSharing ? 'Stop Screen Sharing' : 'Start Screen Sharing') : 'Screen sharing not supported'}>
+                <IconButton 
+                  size="large" 
+                  disabled={!isScreenSharingAvailable}
+                  sx={{ 
+                    bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.2)' : isScreenSharingAvailable ? 'rgba(102, 126, 234, 0.2)' : 'rgba(107, 114, 128, 0.2)', 
+                    color: isScreenSharing ? '#10b981' : isScreenSharingAvailable ? '#667eea' : '#6b7280',
+                    width: 56,
+                    height: 56,
+                    '&:hover': {
+                      bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.3)' : isScreenSharingAvailable ? 'rgba(102, 126, 234, 0.3)' : 'rgba(107, 114, 128, 0.2)'
+                    },
+                    '&:disabled': {
+                      bgcolor: 'rgba(107, 114, 128, 0.2)',
+                      color: '#6b7280'
+                    }
+                  }}
+                  onClick={handleScreenShare}
+                >
+                  <ScreenShareIcon />
+                </IconButton>
+              </Tooltip>
               
               <IconButton 
                 size="large" 
@@ -879,16 +1034,40 @@ export default function RoomPage({ roomId }) {
           <Box sx={{ flex: 1, overflowY: 'auto', mb: 2, pr: 1 }}>
             {messages.map((msg, i) => (
               <Box key={i} sx={{ mb: 2 }}>
-                <Typography fontWeight={700} fontSize={14} sx={{ color: 'white', mb: 0.5 }}>
-                  {msg.sender}
-                </Typography>
-                <Typography fontSize={14} sx={{ color: 'rgba(255, 255, 255, 0.8)', mb: 0.5 }}>
-                  {msg.text}
-                </Typography>
-                {msg.time && (
-                  <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                    {msg.time}
-                  </Typography>
+                {msg.type === 'system' ? (
+                  // System message (screen sharing events)
+                  <Box sx={{ 
+                    textAlign: 'center', 
+                    py: 1, 
+                    px: 2, 
+                    bgcolor: 'rgba(16, 185, 129, 0.1)', 
+                    borderRadius: 2,
+                    border: '1px solid rgba(16, 185, 129, 0.3)'
+                  }}>
+                    <Typography fontSize={12} sx={{ color: '#10b981', fontWeight: 600 }}>
+                      {msg.text}
+                    </Typography>
+                    {msg.time && (
+                      <Typography variant="caption" sx={{ color: 'rgba(16, 185, 129, 0.7)' }}>
+                        {msg.time}
+                      </Typography>
+                    )}
+                  </Box>
+                ) : (
+                  // Regular chat message
+                  <Box>
+                    <Typography fontWeight={700} fontSize={14} sx={{ color: 'white', mb: 0.5 }}>
+                      {msg.sender}
+                    </Typography>
+                    <Typography fontSize={14} sx={{ color: 'rgba(255, 255, 255, 0.8)', mb: 0.5 }}>
+                      {msg.text}
+                    </Typography>
+                    {msg.time && (
+                      <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)' }}>
+                        {msg.time}
+                      </Typography>
+                    )}
+                  </Box>
                 )}
               </Box>
             ))}
