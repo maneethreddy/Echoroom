@@ -16,6 +16,8 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import PeopleIcon from '@mui/icons-material/People';
 import SettingsIcon from '@mui/icons-material/Settings';
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
+import PushPinIcon from '@mui/icons-material/PushPin';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 
 const SOCKET_SERVER_URL = 'http://localhost:8000';
 
@@ -32,6 +34,7 @@ export default function RoomPage({ roomId }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isScreenSharingAvailable, setIsScreenSharingAvailable] = useState(false);
+  const [pinnedParticipant, setPinnedParticipant] = useState(null); // {id, name, photo, stream}
   const myVideo = useRef();
   const peersRef = useRef([]);
   const socketRef = useRef();
@@ -150,16 +153,26 @@ export default function RoomPage({ roomId }) {
       peersRef.current = [];
       setPeers([]);
       
-      // Create peers for all users
+      // Create peers for all users (excluding self)
       users.forEach(({ id, name, photo }) => {
+        if (id === socket.id) {
+          console.log('⏭️ Skipping self in peer creation:', id);
+          return;
+        }
+        
         console.log('🔨 Creating peer for user:', id, name);
         try {
           const peer = createPeer(id, socket.id, currentStream, name, photo);
-          peersRef.current.push({ peerID: id, peer, name, photo });
+          const peerObj = { peerID: id, peer, name, photo };
+          peersRef.current.push(peerObj);
+          console.log('✅ Created peer for:', id);
         } catch (error) {
           console.error('❌ Error creating peer for', id, ':', error);
         }
       });
+      
+      // Update peers state
+      setPeers([...peersRef.current]);
     });
 
     // FIXED: Handle user-joined with deduplication
@@ -192,6 +205,9 @@ export default function RoomPage({ roomId }) {
         peersRef.current.push(newPeerObj);
         console.log('✅ Added new peer to peersRef:', payload.callerID);
         
+        // Update peers state
+        setPeers([...peersRef.current]);
+        
       } catch (error) {
         console.error('❌ Error adding peer:', error);
       }
@@ -216,7 +232,7 @@ export default function RoomPage({ roomId }) {
     socket.on('peer-signal', payload => {
       console.log('📡 Received peer signal from:', payload.from, 'Type:', payload.signal.type);
       const item = peersRef.current.find(p => p.peerID === payload.from);
-      if (item && item.peer) {
+      if (item && item.peer && !item.peer.destroyed) {
         try {
           item.peer.signal(payload.signal);
           console.log('✅ Applied peer signal from:', payload.from);
@@ -224,7 +240,7 @@ export default function RoomPage({ roomId }) {
           console.error('❌ Error applying peer signal:', error);
         }
       } else {
-        console.warn('⚠️ Peer not found for signal from:', payload.from);
+        console.warn('⚠️ Peer not found or destroyed for signal from:', payload.from);
       }
     });
 
@@ -325,7 +341,11 @@ export default function RoomPage({ roomId }) {
     
     peer.on('error', err => {
       console.error('❌ Peer error for:', userToSignal, err);
-      setPeers(prev => prev.filter(p => p.peerID !== userToSignal));
+      // Only remove peer if it's a critical error, not just connection issues
+      if (err.message.includes('User-Initiated Abort') || err.message.includes('Close called')) {
+        console.log('🔄 Peer connection closed normally for:', userToSignal);
+        setPeers(prev => prev.filter(p => p.peerID !== userToSignal));
+      }
     });
     
     // CRITICAL FIX: Enhanced stream handling
@@ -346,14 +366,22 @@ export default function RoomPage({ roomId }) {
         const newPeer = { 
           peerID: userToSignal, 
           peer, 
-          name, 
-          photo, 
+          name: name || 'Unknown', 
+          photo: photo || '', 
           stream: remoteStream 
         };
         const updated = [...filtered, newPeer];
         console.log('📊 Updated peers state:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
         return updated;
       });
+      
+      // Also update peersRef to keep it in sync
+      const existingIndex = peersRef.current.findIndex(p => p.peerID === userToSignal);
+      if (existingIndex >= 0) {
+        peersRef.current[existingIndex].stream = remoteStream;
+        peersRef.current[existingIndex].name = name || 'Unknown';
+        peersRef.current[existingIndex].photo = photo || '';
+      }
     });
     
     peer.on('iceStateChange', (state) => {
@@ -413,19 +441,29 @@ export default function RoomPage({ roomId }) {
         return;
       }
       
+      // Update peers state with the stream
       setPeers(prev => {
+        // Remove any existing peer with same ID to prevent duplicates
         const filtered = prev.filter(p => p.peerID !== callerID);
         const newPeer = { 
           peerID: callerID, 
           peer, 
-          name, 
-          photo, 
+          name: name || 'Unknown', 
+          photo: photo || '', 
           stream: remoteStream 
         };
         const updated = [...filtered, newPeer];
-        console.log('📊 Updated peers state:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
+        console.log('📊 Updated peers state for addPeer:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
         return updated;
       });
+      
+      // Also update peersRef to keep it in sync
+      const existingIndex = peersRef.current.findIndex(p => p.peerID === callerID);
+      if (existingIndex >= 0) {
+        peersRef.current[existingIndex].stream = remoteStream;
+        peersRef.current[existingIndex].name = name || 'Unknown';
+        peersRef.current[existingIndex].photo = photo || '';
+      }
     });
     
     peer.on('iceStateChange', (state) => {
@@ -496,19 +534,9 @@ export default function RoomPage({ roomId }) {
       // Notify other participants that screen sharing stopped
       socketRef.current.emit('screen-share-stopped', { roomId, userId: user.id || 'user' });
       
-      // Update all peers with camera stream
-      peersRef.current.forEach(peerObj => {
-        if (peerObj.peer && localStream) {
-          const videoTrack = localStream.getVideoTracks()[0];
-          const audioTrack = localStream.getAudioTracks()[0];
-          if (videoTrack) {
-            const sender = peerObj.peer.getSenders().find(s => s.track?.kind === 'video');
-            if (sender) {
-              sender.replaceTrack(videoTrack);
-            }
-          }
-        }
-      });
+      // Recreate peers with camera stream
+      await recreatePeersWithStream(localStream);
+      
     } else {
       // Start screen sharing
       try {
@@ -520,12 +548,29 @@ export default function RoomPage({ roomId }) {
           audio: false // Most browsers don't support audio in screen sharing
         });
         
-        setScreenStream(displayStream);
+        // Create a new stream that combines screen video with camera audio
+        const combinedStream = new MediaStream();
+        
+        // Add screen video track
+        const screenVideoTrack = displayStream.getVideoTracks()[0];
+        if (screenVideoTrack) {
+          combinedStream.addTrack(screenVideoTrack);
+        }
+        
+        // Add camera audio track if available
+        if (localStream) {
+          const audioTrack = localStream.getAudioTracks()[0];
+          if (audioTrack) {
+            combinedStream.addTrack(audioTrack);
+          }
+        }
+        
+        setScreenStream(combinedStream);
         setIsScreenSharing(true);
         
-        // Switch video to screen stream
+        // Switch video to combined stream
         if (myVideo.current) {
-          myVideo.current.srcObject = displayStream;
+          myVideo.current.srcObject = combinedStream;
         }
         
         // Notify other participants that screen sharing started
@@ -535,25 +580,8 @@ export default function RoomPage({ roomId }) {
           userName: user.name 
         });
         
-        // Update all peers with screen stream
-        const screenVideoTrack = displayStream.getVideoTracks()[0];
-        const localAudioTrack = localStream?.getAudioTracks()[0];
-        
-        peersRef.current.forEach(peerObj => {
-          if (peerObj.peer) {
-            // Replace video track with screen track
-            const videoSender = peerObj.peer.getSenders().find(s => s.track?.kind === 'video');
-            if (videoSender && screenVideoTrack) {
-              videoSender.replaceTrack(screenVideoTrack);
-            }
-            
-            // Keep audio track from camera
-            const audioSender = peerObj.peer.getSenders().find(s => s.track?.kind === 'audio');
-            if (audioSender && localAudioTrack) {
-              audioSender.replaceTrack(localAudioTrack);
-            }
-          }
-        });
+        // Recreate peers with the new combined stream
+        await recreatePeersWithStream(combinedStream);
         
         // Handle screen sharing stop
         displayStream.getVideoTracks()[0].onended = () => {
@@ -571,6 +599,51 @@ export default function RoomPage({ roomId }) {
     }
   };
 
+  // Helper function to recreate peers with a new stream
+  const recreatePeersWithStream = async (newStream) => {
+    console.log('🔄 Recreating peers with new stream');
+    const currentPeers = [...peersRef.current];
+    
+    // Store peer information
+    const peerInfo = currentPeers.map(peerObj => ({
+      peerID: peerObj.peerID,
+      name: peerObj.name,
+      photo: peerObj.photo
+    }));
+    
+    // Destroy current peers
+    currentPeers.forEach(peerObj => {
+      if (peerObj.peer && !peerObj.peer.destroyed) {
+        try {
+          peerObj.peer.destroy();
+        } catch (error) {
+          console.warn('Error destroying peer:', error);
+        }
+      }
+    });
+    
+    // Clear peers array
+    peersRef.current = [];
+    setPeers([]);
+    
+    // Wait a bit for cleanup
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Recreate peers with new stream
+    for (const info of peerInfo) {
+      try {
+        const newPeer = createPeer(info.peerID, info.peerID, newStream, info.name, info.photo);
+        peersRef.current.push(newPeer);
+        console.log('✅ Recreated peer for:', info.peerID);
+      } catch (error) {
+        console.error('❌ Error recreating peer for:', info.peerID, error);
+      }
+    }
+    
+    // Update peers state
+    setPeers([...peersRef.current]);
+  };
+
   const handleRecording = () => {
     setIsRecording(!isRecording);
     // TODO: Implement recording functionality
@@ -579,6 +652,18 @@ export default function RoomPage({ roomId }) {
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomId);
     // TODO: Show success notification
+  };
+
+  const handlePinParticipant = (participant) => {
+    if (pinnedParticipant && pinnedParticipant.id === participant.id) {
+      setPinnedParticipant(null); // Unpin
+    } else {
+      setPinnedParticipant(participant); // Pin
+    }
+  };
+
+  const handleUnpin = () => {
+    setPinnedParticipant(null);
   };
 
   // --- UI ---
@@ -692,19 +777,26 @@ export default function RoomPage({ roomId }) {
               border: '1px solid rgba(255, 255, 255, 0.1)'
             }}
           >
-            {/* Main video stream here */}
-            <video 
-              ref={myVideo} 
-              autoPlay 
-              muted 
-              playsInline
-              style={{ 
-                width: '100%', 
-                height: '100%', 
-                objectFit: 'cover', 
-                background: '#1e293b' 
-              }} 
-            />
+            {/* Main video stream - show pinned participant or user's video */}
+            {pinnedParticipant ? (
+              <PinnedParticipantVideo 
+                participant={pinnedParticipant} 
+                onUnpin={handleUnpin}
+              />
+            ) : (
+              <video 
+                ref={myVideo} 
+                autoPlay 
+                muted 
+                playsInline
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  objectFit: 'cover', 
+                  background: '#1e293b' 
+                }} 
+              />
+            )}
             
             {/* Status indicators */}
             <Box sx={{ position: 'absolute', top: 16, left: 16, display: 'flex', gap: 1 }}>
@@ -747,6 +839,7 @@ export default function RoomPage({ roomId }) {
               )}
             </Box>
             
+            {/* Show participant name if pinned, otherwise show user name */}
             <Box sx={{ position: 'absolute', bottom: 16, left: 16 }}>
               <Paper 
                 sx={{ 
@@ -759,24 +852,39 @@ export default function RoomPage({ roomId }) {
                   fontWeight: 600
                 }}
               >
-                {user.name}
+                {pinnedParticipant ? pinnedParticipant.name : user.name}
               </Paper>
             </Box>
           </Paper>
           
           {/* Participant Gallery */}
-          {peers.length > 0 && (
-            <Box sx={{ width: '100%', maxWidth: 1000, mb: 4 }}>
-              <Typography variant="h6" sx={{ color: 'white', mb: 2, fontWeight: 600 }}>
-                Participants ({peers.length + 1})
-              </Typography>
-              <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
-                {peers.map((peerObj, i) => (
-                  <PeerVideo key={peerObj.peerID} stream={peerObj.stream} name={peerObj.name} photo={peerObj.photo} id={peerObj.peerID} />
-                ))}
-              </Stack>
-            </Box>
-          )}
+          <Box sx={{ width: '100%', maxWidth: 1000, mb: 4 }}>
+            <Typography variant="h6" sx={{ color: 'white', mb: 2, fontWeight: 600 }}>
+              Participants ({peers.length + 1})
+            </Typography>
+            <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', gap: 2 }}>
+              {/* User's video */}
+              <UserVideo 
+                stream={localStream} 
+                name={user.name} 
+                photo={user.profilePicture} 
+                isPinned={false}
+                onPin={() => handlePinParticipant({ id: 'local', name: user.name, photo: user.profilePicture, stream: localStream })}
+              />
+              {/* Other participants */}
+              {peers.map((peerObj, i) => (
+                <PeerVideo 
+                  key={peerObj.peerID} 
+                  stream={peerObj.stream} 
+                  name={peerObj.name} 
+                  photo={peerObj.photo} 
+                  id={peerObj.peerID}
+                  isPinned={pinnedParticipant && pinnedParticipant.id === peerObj.peerID}
+                  onPin={() => handlePinParticipant({ id: peerObj.peerID, name: peerObj.name, photo: peerObj.photo, stream: peerObj.stream })}
+                />
+              ))}
+            </Stack>
+          </Box>
           
           {/* Controls */}
           <Paper 
@@ -821,28 +929,46 @@ export default function RoomPage({ roomId }) {
                 <VideocamIcon />
               </IconButton>
               
-              <Tooltip title={isScreenSharingAvailable ? (isScreenSharing ? 'Stop Screen Sharing' : 'Start Screen Sharing') : 'Screen sharing not supported'}>
-                <IconButton 
-                  size="large" 
-                  disabled={!isScreenSharingAvailable}
-                  sx={{ 
-                    bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.2)' : isScreenSharingAvailable ? 'rgba(102, 126, 234, 0.2)' : 'rgba(107, 114, 128, 0.2)', 
-                    color: isScreenSharing ? '#10b981' : isScreenSharingAvailable ? '#667eea' : '#6b7280',
-                    width: 56,
-                    height: 56,
-                    '&:hover': {
-                      bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.3)' : isScreenSharingAvailable ? 'rgba(102, 126, 234, 0.3)' : 'rgba(107, 114, 128, 0.2)'
-                    },
-                    '&:disabled': {
-                      bgcolor: 'rgba(107, 114, 128, 0.2)',
-                      color: '#6b7280'
-                    }
-                  }}
-                  onClick={handleScreenShare}
-                >
-                  <ScreenShareIcon />
-                </IconButton>
-              </Tooltip>
+                            {isScreenSharingAvailable ? (
+                <Tooltip title={isScreenSharing ? 'Stop Screen Sharing' : 'Start Screen Sharing'}>
+                  <IconButton 
+                    size="large" 
+                    sx={{ 
+                      bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.2)' : 'rgba(102, 126, 234, 0.2)', 
+                      color: isScreenSharing ? '#10b981' : '#667eea',
+                      width: 56,
+                      height: 56,
+                      '&:hover': {
+                        bgcolor: isScreenSharing ? 'rgba(16, 185, 129, 0.3)' : 'rgba(102, 126, 234, 0.3)'
+                      }
+                    }} 
+                    onClick={handleScreenShare}
+                  >
+                    <ScreenShareIcon />
+                  </IconButton>
+                </Tooltip>
+              ) : (
+                <Tooltip title="Screen sharing not supported">
+                  <span>
+                    <IconButton 
+                      size="large" 
+                      disabled
+                      sx={{ 
+                        bgcolor: 'rgba(107, 114, 128, 0.2)', 
+                        color: '#6b7280',
+                        width: 56,
+                        height: 56,
+                        '&:disabled': {
+                          bgcolor: 'rgba(107, 114, 128, 0.2)',
+                          color: '#6b7280'
+                        }
+                      }} 
+                    >
+                      <ScreenShareIcon />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
               
               <IconButton 
                 size="large" 
@@ -1207,8 +1333,8 @@ export default function RoomPage({ roomId }) {
   );
 }
 
-// FIXED: Enhanced PeerVideo component with proper video handling
-function PeerVideo({ stream, name, photo, id }) {
+// Enhanced PeerVideo component with pinning functionality
+function PeerVideo({ stream, name, photo, id, isPinned, onPin }) {
   const videoRef = useRef();
   const [videoError, setVideoError] = useState(false);
 
@@ -1274,7 +1400,7 @@ function PeerVideo({ stream, name, photo, id }) {
       position: 'relative', 
       borderRadius: 3, 
       overflow: 'hidden', 
-      border: '2px solid rgba(255, 255, 255, 0.2)',
+      border: isPinned ? '2px solid #667eea' : '2px solid rgba(255, 255, 255, 0.2)',
       bgcolor: '#1e293b'
     }}>
       {videoError ? (
@@ -1317,6 +1443,25 @@ function PeerVideo({ stream, name, photo, id }) {
           }}
         />
       )}
+      
+      {/* Pin button */}
+      <IconButton
+        onClick={onPin}
+        sx={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          bgcolor: 'rgba(0, 0, 0, 0.7)',
+          color: isPinned ? '#667eea' : 'white',
+          width: 32,
+          height: 32,
+          '&:hover': {
+            bgcolor: 'rgba(0, 0, 0, 0.8)',
+          }
+        }}
+      >
+        {isPinned ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+      </IconButton>
       
       <Box sx={{ 
         position: 'absolute', 
@@ -1361,5 +1506,148 @@ function PeerVideo({ stream, name, photo, id }) {
         }} />
       </Box>
     </Box>
+  );
+}
+
+// User video component for the participant gallery
+function UserVideo({ stream, name, photo, isPinned, onPin }) {
+  const videoRef = useRef();
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  return (
+    <Box sx={{ 
+      position: 'relative', 
+      borderRadius: 3, 
+      overflow: 'hidden', 
+      border: isPinned ? '2px solid #667eea' : '2px solid rgba(255, 255, 255, 0.2)',
+      bgcolor: '#1e293b'
+    }}>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={true} // Mute local video
+        style={{
+          width: 200,
+          height: 150,
+          objectFit: 'cover',
+          background: '#1e293b'
+        }}
+      />
+      
+      {/* Pin button */}
+      <IconButton
+        onClick={onPin}
+        sx={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          bgcolor: 'rgba(0, 0, 0, 0.7)',
+          color: isPinned ? '#667eea' : 'white',
+          width: 32,
+          height: 32,
+          '&:hover': {
+            bgcolor: 'rgba(0, 0, 0, 0.8)',
+          }
+        }}
+      >
+        {isPinned ? <PushPinIcon fontSize="small" /> : <PushPinOutlinedIcon fontSize="small" />}
+      </IconButton>
+      
+      <Box sx={{ 
+        position: 'absolute', 
+        bottom: 8, 
+        left: 8, 
+        right: 8,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        bgcolor: 'rgba(0, 0, 0, 0.7)',
+        borderRadius: 2,
+        px: 1,
+        py: 0.5
+      }}>
+        <Avatar 
+          src={photo} 
+          sx={{ 
+            width: 20, 
+            height: 20, 
+            bgcolor: 'rgba(102, 126, 234, 0.8)',
+            fontSize: 10
+          }}
+        >
+          {name ? name[0] : '?'}
+        </Avatar>
+        <Typography 
+          variant="caption" 
+          sx={{ 
+            color: 'white', 
+            fontWeight: 600,
+            flex: 1,
+            fontSize: 11
+          }}
+        >
+          {name} (You)
+        </Typography>
+        <Box sx={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          bgcolor: '#10b981'
+        }} />
+      </Box>
+    </Box>
+  );
+}
+
+// Pinned participant video component for main display
+function PinnedParticipantVideo({ participant, onUnpin }) {
+  const videoRef = useRef();
+
+  useEffect(() => {
+    if (videoRef.current && participant.stream) {
+      videoRef.current.srcObject = participant.stream;
+    }
+  }, [participant.stream]);
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={participant.id === 'local'} // Mute if it's local video
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          background: '#1e293b'
+        }}
+      />
+      
+      {/* Unpin button */}
+      <IconButton
+        onClick={onUnpin}
+        sx={{
+          position: 'absolute',
+          top: 16,
+          right: 16,
+          bgcolor: 'rgba(0, 0, 0, 0.7)',
+          color: '#667eea',
+          width: 40,
+          height: 40,
+          '&:hover': {
+            bgcolor: 'rgba(0, 0, 0, 0.8)',
+          }
+        }}
+      >
+        <PushPinIcon />
+      </IconButton>
+    </>
   );
 } 

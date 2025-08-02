@@ -1,8 +1,6 @@
 // Polyfills for Node.js modules (required for simple-peer)
 import 'process/browser';
 import { Buffer } from 'buffer';
-window.Buffer = Buffer;
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
@@ -11,6 +9,8 @@ import reportWebVitals from './reportWebVitals';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
+
+window.Buffer = Buffer;
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
