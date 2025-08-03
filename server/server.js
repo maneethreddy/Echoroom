@@ -218,10 +218,11 @@ async function startServer() {
     console.log("✅ Connected to MongoDB successfully!");
 
     // Start the server after MongoDB connects
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 EchoRoom server running on port ${PORT}`);
       console.log(`📡 Socket.IO server ready for connections`);
       console.log(`🔗 API endpoints available at http://localhost:${PORT}/api`);
+      console.log(`🌐 Network accessible at http://0.0.0.0:${PORT}`);
     });
 
   } catch (err) {

@@ -132,4 +132,42 @@ router.post("/google", async (req, res) => {
   }
 });
 
+// Refresh token endpoint
+router.post("/refresh", async (req, res) => {
+  const { token } = req.body;
+  
+  if (!token) {
+    return res.status(400).json({ msg: "Token is required" });
+  }
+  
+  try {
+    // Verify the existing token
+    const decoded = jwt.verify(token, JWT_SECRET);
+    
+    // Get user from database
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+    
+    // Generate new token
+    const newToken = jwt.sign({ id: user._id }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
+    
+    res.json({
+      token: newToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        profilePicture: user.profilePicture
+      },
+    });
+  } catch (err) {
+    console.error("Token refresh error:", err);
+    res.status(401).json({ msg: "Invalid token" });
+  }
+});
+
 module.exports = router;

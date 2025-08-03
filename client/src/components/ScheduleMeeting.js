@@ -25,7 +25,8 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import axios from 'axios';
+import api from '../utils/api';
+import { getToken, isTokenExpired, removeToken } from '../utils/auth';
 
 const durations = [
   '15 minutes',
@@ -132,17 +133,19 @@ export default function ScheduleMeeting() {
       setLoading(true);
       
       try {
-        const token = localStorage.getItem('token');
+        const token = getToken();
+        
+        // Check if token exists and is valid
         if (!token) {
-          throw new Error('Authentication required');
+          throw new Error('Authentication required. Please login again.');
+        }
+        
+        if (isTokenExpired(token)) {
+          removeToken();
+          throw new Error('Session expired. Please login again.');
         }
 
-        const response = await axios.post('http://localhost:8000/api/meetings', form, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        const response = await api.post('/meetings', form);
 
         setLoading(false);
         setSuccessDialog({ 
@@ -154,7 +157,24 @@ export default function ScheduleMeeting() {
 
       } catch (err) {
         setLoading(false);
-        const errorMessage = err.response?.data?.msg || err.message || 'Failed to schedule meeting';
+        let errorMessage = 'Failed to schedule meeting';
+        
+        if (err.response?.data?.msg) {
+          errorMessage = err.response.data.msg;
+        } else if (err.message) {
+          errorMessage = err.message;
+        }
+        
+        // If token is invalid, redirect to login
+        if (errorMessage.includes('Invalid or expired token') || 
+            errorMessage.includes('Authentication required') ||
+            errorMessage.includes('Session expired')) {
+          removeToken();
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 2000);
+        }
+        
         showSnackbar(errorMessage, 'error');
         console.error('Error scheduling meeting:', err);
       }
@@ -264,7 +284,12 @@ export default function ScheduleMeeting() {
                       value={form.date}
                       onChange={handleChange}
                       InputLabelProps={{ shrink: true }}
-                      InputProps={{ style: { borderRadius: 12 } }}
+                      InputProps={{ 
+                        style: { borderRadius: 12 },
+                        inputProps: {
+                          min: new Date().toISOString().split('T')[0] // Disable past dates
+                        }
+                      }}
                     />
                     <FormHelperText>{errors.date}</FormHelperText>
                   </FormControl>
@@ -276,8 +301,13 @@ export default function ScheduleMeeting() {
                       onChange={handleChange}
                       required
                       error={!!errors.time}
-                      helperText={errors.time}
-                      InputProps={{ style: { borderRadius: 12 } }}
+                      helperText={errors.time || "Select meeting time"}
+                      InputProps={{ 
+                        style: { borderRadius: 12 },
+                        placeholder: "HH:MM"
+                      }}
+                      sx={{ flex: 1 }}
+                      placeholder="HH:MM"
                     />
                     <FormControl>
                       <Select
@@ -290,19 +320,43 @@ export default function ScheduleMeeting() {
                         <MenuItem value="PM">PM</MenuItem>
                       </Select>
                     </FormControl>
-                    <FormControl>
-                      <Select
-                        name="timezone"
-                        value={form.timezone}
-                        onChange={handleChange}
-                        sx={{ borderRadius: 2, minWidth: 180 }}
-                      >
-                        {timezones.map((tz) => (
-                          <MenuItem key={tz} value={tz}>{tz}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
                   </Box>
+                  <FormControl fullWidth margin="normal">
+                    <InputLabel>Timezone</InputLabel>
+                    <Select
+                      name="timezone"
+                      value={form.timezone}
+                      onChange={handleChange}
+                      sx={{ borderRadius: 2 }}
+                    >
+                      {timezones.map((tz) => (
+                        <MenuItem key={tz} value={tz}>{tz}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  
+                  {/* Show selected date and time preview */}
+                  {form.date && form.time && (
+                    <Box sx={{ 
+                      mt: 2, 
+                      p: 2, 
+                      bgcolor: 'rgba(33, 150, 243, 0.1)', 
+                      borderRadius: 2, 
+                      border: '1px solid rgba(33, 150, 243, 0.2)'
+                    }}>
+                      <Typography variant="body2" color="primary" fontWeight={600}>
+                        📅 Meeting scheduled for:
+                      </Typography>
+                      <Typography variant="body1" color="text.primary" sx={{ mt: 0.5 }}>
+                        {new Date(form.date).toLocaleDateString('en-US', { 
+                          weekday: 'long', 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        })} at {form.time} {form.ampm}
+                      </Typography>
+                    </Box>
+                  )}
                   <FormControl fullWidth margin="normal">
                     <InputLabel>Duration</InputLabel>
                     <Select

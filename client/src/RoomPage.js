@@ -19,7 +19,8 @@ import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 
-const SOCKET_SERVER_URL = 'http://localhost:8000';
+// Use environment variable or fallback to localhost
+const SOCKET_SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:8000';
 
 export default function RoomPage({ roomId }) {
   const [participants, setParticipants] = useState([]); // {id, name, photo, mic, cam}

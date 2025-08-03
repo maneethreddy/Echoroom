@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   AppBar, Toolbar, Typography, Button, Box, Container, Avatar, Paper, Grid, Stack, IconButton,
-  Alert, Snackbar, CircularProgress, Chip, Divider
+  Alert, Snackbar, CircularProgress, Chip, Divider, Tooltip
 } from '@mui/material';
 import VideoCameraFrontIcon from '@mui/icons-material/VideoCameraFront';
 import LinkIcon from '@mui/icons-material/Link';
@@ -14,9 +14,12 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import DownloadIcon from '@mui/icons-material/Download';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from './utils/api';
+import { getToken, isTokenExpired, removeToken } from './utils/auth';
 
 const ACCENT = '#667eea';
 const CARD_BG = '#ffffff';
@@ -109,9 +112,8 @@ export default function Dashboard() {
   } catch (e) {}
 
   const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    window.location.href = '/auth';
+    removeToken();
+    window.location.href = '/login';
   };
 
   // Generate a random room ID
@@ -136,20 +138,77 @@ export default function Dashboard() {
     navigate('/schedule');
   };
 
+  // Handle joining a meeting
+  const handleJoinMeeting = (meeting) => {
+    if (meeting.meetingId) {
+      navigate(`/room/${meeting.meetingId}`);
+    }
+  };
+
+  // Handle deleting a meeting
+  const handleDeleteMeeting = async (meeting) => {
+    if (window.confirm(`Are you sure you want to delete "${meeting.topic}"?`)) {
+      try {
+        await api.delete(`/meetings/${meeting._id}`);
+        showSnackbar('Meeting deleted successfully', 'success');
+        fetchScheduledMeetings(); // Refresh the list
+      } catch (err) {
+        console.error('Error deleting meeting:', err);
+        const errorMessage = err.response?.data?.msg || 'Failed to delete meeting';
+        showSnackbar(errorMessage, 'error');
+      }
+    }
+  };
+
+  // Format meeting date for display
+  const formatMeetingDate = (scheduledDate) => {
+    const meetingDate = new Date(scheduledDate);
+    const now = new Date();
+    const isPast = meetingDate < now;
+    const isToday = meetingDate.toDateString() === now.toDateString();
+    const isTomorrow = meetingDate.toDateString() === new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString();
+    
+    let dateStr;
+    if (isToday) {
+      dateStr = 'Today';
+    } else if (isTomorrow) {
+      dateStr = 'Tomorrow';
+    } else {
+      dateStr = meetingDate.toLocaleDateString('en-US', { 
+        weekday: 'short', 
+        month: 'short', 
+        day: 'numeric' 
+      });
+    }
+    
+    const timeStr = meetingDate.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+    
+    return { dateStr, timeStr, isPast, isToday };
+  };
+
   // Fetch scheduled meetings
   const fetchScheduledMeetings = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       if (!token) return;
+      
+      if (isTokenExpired(token)) {
+        removeToken();
+        window.location.href = '/login';
+        return;
+      }
 
-      const response = await axios.get('http://localhost:8000/api/meetings', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      const response = await api.get('/meetings');
       setScheduledMeetings(response.data);
     } catch (err) {
       console.error('Error fetching meetings:', err);
+      if (err.response?.data?.msg?.includes('Invalid or expired token')) {
+        removeToken();
+        window.location.href = '/login';
+      }
     }
   };
 
@@ -356,44 +415,179 @@ export default function Dashboard() {
               <Typography variant="h6" sx={{ fontWeight: 700, color: TEXT_DARK }}>
                 Scheduled Meetings
               </Typography>
-              <Chip label={`${scheduledMeetings.length} meetings`} size="small" sx={{ bgcolor: 'rgba(102, 126, 234, 0.1)', color: ACCENT }} />
-            </Box>
-            <Stack spacing={2}>
-              {scheduledMeetings.map((meeting, i) => (
-                <Box 
-                  key={i} 
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Chip label={`${scheduledMeetings.length} meetings`} size="small" sx={{ bgcolor: 'rgba(102, 126, 234, 0.1)', color: ACCENT }} />
+                <IconButton 
+                  size="small" 
+                  onClick={fetchScheduledMeetings}
                   sx={{ 
-                    p: 2, 
-                    borderRadius: 3, 
-                    bgcolor: 'rgba(248, 250, 252, 0.8)',
-                    border: '1px solid rgba(226, 232, 240, 0.6)',
-                    transition: 'all 0.2s ease',
-                    '&:hover': {
-                      bgcolor: 'rgba(102, 126, 234, 0.05)',
-                      borderColor: ACCENT
+                    color: TEXT_GRAY,
+                    '&:hover': { 
+                      color: ACCENT,
+                      bgcolor: 'rgba(102, 126, 234, 0.1)' 
                     }
                   }}
                 >
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography fontWeight={600} color={TEXT_DARK}>
-                        {meeting.title}
-                      </Typography>
-                      <Typography variant="body2" color={TEXT_GRAY}>
-                        {meeting.time}
-                      </Typography>
-                    </Box>
-                    <Chip 
-                      label={meeting.status} 
-                      size="small" 
-                      sx={{ 
-                        bgcolor: meeting.status === 'completed' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(102, 126, 234, 0.1)',
-                        color: meeting.status === 'completed' ? '#10b981' : ACCENT
-                      }} 
-                    />
-                  </Box>
+                  <RefreshIcon />
+                </IconButton>
+              </Box>
+            </Box>
+            <Stack spacing={2}>
+              {scheduledMeetings.length === 0 ? (
+                <Box sx={{ 
+                  p: 4, 
+                  textAlign: 'center', 
+                  color: TEXT_GRAY,
+                  border: '2px dashed rgba(226, 232, 240, 0.8)',
+                  borderRadius: 3
+                }}>
+                  <EventIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+                  <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
+                    No scheduled meetings
+                  </Typography>
+                  <Typography variant="body2">
+                    Create your first meeting to get started
+                  </Typography>
                 </Box>
-              ))}
+              ) : (
+                scheduledMeetings.map((meeting, i) => {
+                  // Format the scheduled date
+                  const { dateStr, timeStr, isPast, isToday } = formatMeetingDate(meeting.scheduledDate);
+                  
+                  // Determine status
+                  let status = meeting.status;
+                  let statusColor = '#667eea';
+                  let statusBg = 'rgba(102, 126, 234, 0.1)';
+                  
+                  if (isPast && status === 'scheduled') {
+                    status = 'missed';
+                    statusColor = '#ef4444';
+                    statusBg = 'rgba(239, 68, 68, 0.1)';
+                  } else if (status === 'completed') {
+                    statusColor = '#10b981';
+                    statusBg = 'rgba(16, 185, 129, 0.1)';
+                  } else if (status === 'ongoing') {
+                    statusColor = '#f59e0b';
+                    statusBg = 'rgba(245, 158, 11, 0.1)';
+                  }
+                  
+                  return (
+                    <Box 
+                      key={meeting._id || i} 
+                      sx={{ 
+                        p: 3, 
+                        borderRadius: 3, 
+                        bgcolor: 'rgba(248, 250, 252, 0.8)',
+                        border: '1px solid rgba(226, 232, 240, 0.6)',
+                        transition: 'all 0.2s ease',
+                        cursor: 'pointer',
+                        '&:hover': {
+                          bgcolor: 'rgba(102, 126, 234, 0.05)',
+                          borderColor: ACCENT,
+                          transform: 'translateY(-2px)',
+                          boxShadow: '0 4px 12px rgba(102, 126, 234, 0.15)'
+                        }
+                      }}
+                      onClick={() => {
+                        // Navigate to meeting room or show meeting details
+                        if (status === 'scheduled' && !isPast) {
+                          navigate(`/room/${meeting.meetingId}`);
+                        }
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                        <Box sx={{ flex: 1 }}>
+                          <Typography fontWeight={700} color={TEXT_DARK} sx={{ mb: 1, fontSize: 16 }}>
+                            {meeting.topic}
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                            <Typography variant="body2" color={TEXT_GRAY} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <EventIcon sx={{ fontSize: 14 }} />
+                              {dateStr} at {timeStr}
+                            </Typography>
+                            <Typography variant="body2" color={TEXT_GRAY}>
+                              • {meeting.duration}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Typography variant="body2" color={TEXT_GRAY} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              👤 {meeting.host}
+                            </Typography>
+                            {meeting.participants && meeting.participants.length > 0 && (
+                              <Typography variant="body2" color={TEXT_GRAY}>
+                                • {meeting.participants.length} participants
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                          <Chip 
+                            label={status} 
+                            size="small" 
+                            sx={{ 
+                              bgcolor: statusBg,
+                              color: statusColor,
+                              fontWeight: 600,
+                              textTransform: 'capitalize'
+                            }} 
+                          />
+                          {meeting.meetingId && (
+                            <Typography variant="caption" color={TEXT_GRAY} sx={{ fontFamily: 'monospace' }}>
+                              ID: {meeting.meetingId}
+                            </Typography>
+                          )}
+                          <Box sx={{ display: 'flex', gap: 1 }}>
+                            {status === 'scheduled' && !isPast && (
+                              <Button
+                                variant="contained"
+                                size="small"
+                                sx={{
+                                  bgcolor: ACCENT,
+                                  color: 'white',
+                                  borderRadius: 2,
+                                  px: 2,
+                                  py: 0.5,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  textTransform: 'none',
+                                  '&:hover': {
+                                    bgcolor: '#5a53c2'
+                                  }
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleJoinMeeting(meeting);
+                                }}
+                              >
+                                Join
+                              </Button>
+                            )}
+                            <Tooltip title="Delete meeting">
+                              <IconButton
+                                size="small"
+                                sx={{
+                                  color: '#ef4444',
+                                  bgcolor: 'rgba(239, 68, 68, 0.1)',
+                                  '&:hover': {
+                                    bgcolor: 'rgba(239, 68, 68, 0.2)',
+                                    color: '#dc2626'
+                                  }
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteMeeting(meeting);
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        </Box>
+                      </Box>
+                    </Box>
+                  );
+                })
+              )}
             </Stack>
           </Paper>
         </Box>

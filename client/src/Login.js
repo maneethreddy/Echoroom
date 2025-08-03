@@ -33,9 +33,10 @@ const Login = () => {
 
       const data = await res.json();
       if (data.token) {
-      localStorage.setItem("token", data.token);
-      window.location.href = "/dashboard"; 
-    }else {
+        localStorage.setItem("token", data.token);
+        localStorage.setItem("user", JSON.stringify(data.user));
+        window.location.href = "/dashboard"; 
+      } else {
         alert(data.msg);
       }
     } catch (err) {
