@@ -34,7 +34,9 @@ export default function RoomPage({ roomId }) {
   const [isRecording, setIsRecording] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isScreenSharingAvailable, setIsScreenSharingAvailable] = useState(false);
+  const [screenSharingUser, setScreenSharingUser] = useState(null); // {id, name}
   const [pinnedParticipant, setPinnedParticipant] = useState(null); // {id, name, photo, stream}
+  const [screenShareNotification, setScreenShareNotification] = useState(null); // {message, type}
   const myVideo = useRef();
   const peersRef = useRef([]);
   const socketRef = useRef();
@@ -107,6 +109,34 @@ export default function RoomPage({ roomId }) {
     socket.on('screen-share-started', (data) => {
       if (mounted) {
         console.log('🖥️ Screen sharing started by:', data.userName);
+        setScreenSharingUser({ id: data.userId, name: data.userName });
+        
+        // Automatically pin the screen sharing user's video
+        if (data.userId !== socket.id) {
+          // Find the peer who is screen sharing
+          const screenSharingPeer = peersRef.current.find(p => p.peerID === data.userId);
+          if (screenSharingPeer) {
+            setPinnedParticipant({
+              id: data.userId,
+              name: data.userName,
+              photo: screenSharingPeer.photo,
+              stream: screenSharingPeer.stream
+            });
+            console.log('📌 Automatically pinned screen sharing user:', data.userName);
+          }
+        }
+        
+        // Show notification
+        setScreenShareNotification({
+          message: `${data.userName} started screen sharing`,
+          type: 'start'
+        });
+        
+        // Auto-hide notification after 3 seconds
+        setTimeout(() => {
+          setScreenShareNotification(null);
+        }, 3000);
+        
         setMessages(msgs => [...msgs, {
           sender: 'System',
           text: `${data.userName} started screen sharing`,
@@ -119,6 +149,30 @@ export default function RoomPage({ roomId }) {
     socket.on('screen-share-stopped', (data) => {
       if (mounted) {
         console.log('🖥️ Screen sharing stopped by:', data.userId);
+        setScreenSharingUser(null);
+        
+        // Unpin the screen sharing user if they were pinned
+        if (pinnedParticipant && pinnedParticipant.id === data.userId) {
+          setPinnedParticipant(null);
+          console.log('📌 Unpinned screen sharing user:', data.userName);
+        }
+        
+        // Also clear local screen sharing state if it was us
+        if (data.userId === socket.id) {
+          setIsScreenSharing(false);
+        }
+        
+        // Show notification
+        setScreenShareNotification({
+          message: 'Screen sharing stopped',
+          type: 'stop'
+        });
+        
+        // Auto-hide notification after 3 seconds
+        setTimeout(() => {
+          setScreenShareNotification(null);
+        }, 3000);
+        
         setMessages(msgs => [...msgs, {
           sender: 'System',
           text: 'Screen sharing stopped',
@@ -359,6 +413,23 @@ export default function RoomPage({ roomId }) {
         return;
       }
       
+      // Check if this is a screen sharing stream
+      const videoTracks = remoteStream.getVideoTracks();
+      let isScreenSharingStream = false;
+      
+      if (videoTracks.length > 0) {
+        const videoTrack = videoTracks[0];
+        console.log('📹 Video track settings:', videoTrack.getSettings());
+        console.log('📹 Video track constraints:', videoTrack.getConstraints());
+        
+        // Check if this looks like a screen sharing track
+        const settings = videoTrack.getSettings();
+        if (settings.width > 1920 || settings.height > 1080) {
+          console.log('🖥️ This appears to be a screen sharing stream (high resolution)');
+          isScreenSharingStream = true;
+        }
+      }
+      
       // Update peers state with the stream
       setPeers(prev => {
         // Remove any existing peer with same ID to prevent duplicates
@@ -368,7 +439,8 @@ export default function RoomPage({ roomId }) {
           peer, 
           name: name || 'Unknown', 
           photo: photo || '', 
-          stream: remoteStream 
+          stream: remoteStream,
+          isScreenSharing: isScreenSharingStream
         };
         const updated = [...filtered, newPeer];
         console.log('📊 Updated peers state:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
@@ -381,6 +453,18 @@ export default function RoomPage({ roomId }) {
         peersRef.current[existingIndex].stream = remoteStream;
         peersRef.current[existingIndex].name = name || 'Unknown';
         peersRef.current[existingIndex].photo = photo || '';
+        peersRef.current[existingIndex].isScreenSharing = isScreenSharingStream;
+      }
+      
+      // Automatically pin screen sharing streams
+      if (isScreenSharingStream) {
+        setPinnedParticipant({
+          id: userToSignal,
+          name: name || 'Unknown',
+          photo: photo || '',
+          stream: remoteStream
+        });
+        console.log('📌 Automatically pinned screen sharing stream from:', name);
       }
     });
     
@@ -441,6 +525,23 @@ export default function RoomPage({ roomId }) {
         return;
       }
       
+      // Check if this is a screen sharing stream
+      const videoTracks = remoteStream.getVideoTracks();
+      let isScreenSharingStream = false;
+      
+      if (videoTracks.length > 0) {
+        const videoTrack = videoTracks[0];
+        console.log('📹 Video track settings:', videoTrack.getSettings());
+        console.log('📹 Video track constraints:', videoTrack.getConstraints());
+        
+        // Check if this looks like a screen sharing track
+        const settings = videoTrack.getSettings();
+        if (settings.width > 1920 || settings.height > 1080) {
+          console.log('🖥️ This appears to be a screen sharing stream (high resolution)');
+          isScreenSharingStream = true;
+        }
+      }
+      
       // Update peers state with the stream
       setPeers(prev => {
         // Remove any existing peer with same ID to prevent duplicates
@@ -450,7 +551,8 @@ export default function RoomPage({ roomId }) {
           peer, 
           name: name || 'Unknown', 
           photo: photo || '', 
-          stream: remoteStream 
+          stream: remoteStream,
+          isScreenSharing: isScreenSharingStream
         };
         const updated = [...filtered, newPeer];
         console.log('📊 Updated peers state for addPeer:', updated.map(p => ({ id: p.peerID, name: p.name, hasStream: !!p.stream })));
@@ -463,6 +565,18 @@ export default function RoomPage({ roomId }) {
         peersRef.current[existingIndex].stream = remoteStream;
         peersRef.current[existingIndex].name = name || 'Unknown';
         peersRef.current[existingIndex].photo = photo || '';
+        peersRef.current[existingIndex].isScreenSharing = isScreenSharingStream;
+      }
+      
+      // Automatically pin screen sharing streams
+      if (isScreenSharingStream) {
+        setPinnedParticipant({
+          id: callerID,
+          name: name || 'Unknown',
+          photo: photo || '',
+          stream: remoteStream
+        });
+        console.log('📌 Automatically pinned screen sharing stream from:', name);
       }
     });
     
@@ -534,12 +648,22 @@ export default function RoomPage({ roomId }) {
       // Notify other participants that screen sharing stopped
       socketRef.current.emit('screen-share-stopped', { roomId, userId: user.id || 'user' });
       
-      // Recreate peers with camera stream
-      await recreatePeersWithStream(localStream);
+      // Replace video tracks in existing peers with camera stream
+      await replaceVideoTracksInPeers(localStream);
       
     } else {
       // Start screen sharing
       try {
+        // Automatically turn on camera if it's off when starting screen sharing
+        if (!camOn && localStream) {
+          const videoTrack = localStream.getVideoTracks()[0];
+          if (videoTrack) {
+            videoTrack.enabled = true;
+            setCamOn(true);
+            console.log('📹 Automatically turned on camera for screen sharing');
+          }
+        }
+        
         const displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: {
             cursor: 'always',
@@ -555,6 +679,7 @@ export default function RoomPage({ roomId }) {
         const screenVideoTrack = displayStream.getVideoTracks()[0];
         if (screenVideoTrack) {
           combinedStream.addTrack(screenVideoTrack);
+          console.log('✅ Added screen video track to combined stream');
         }
         
         // Add camera audio track if available
@@ -562,8 +687,11 @@ export default function RoomPage({ roomId }) {
           const audioTrack = localStream.getAudioTracks()[0];
           if (audioTrack) {
             combinedStream.addTrack(audioTrack);
+            console.log('✅ Added camera audio track to combined stream');
           }
         }
+        
+        console.log('📹 Combined stream tracks:', combinedStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
         
         setScreenStream(combinedStream);
         setIsScreenSharing(true);
@@ -580,8 +708,8 @@ export default function RoomPage({ roomId }) {
           userName: user.name 
         });
         
-        // Recreate peers with the new combined stream
-        await recreatePeersWithStream(combinedStream);
+        // Replace video tracks in existing peers with screen sharing stream
+        await replaceVideoTracksInPeers(combinedStream);
         
         // Handle screen sharing stop
         displayStream.getVideoTracks()[0].onended = () => {
@@ -599,9 +727,63 @@ export default function RoomPage({ roomId }) {
     }
   };
 
-  // Helper function to recreate peers with a new stream
+  // Helper function to replace video tracks in existing peers
+  const replaceVideoTracksInPeers = async (newStream) => {
+    console.log('🔄 Replacing video tracks in peers with new stream');
+    console.log('📹 New stream tracks:', newStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+    
+    const currentPeers = [...peersRef.current];
+    let successCount = 0;
+    let failureCount = 0;
+    
+    for (const peerObj of currentPeers) {
+      if (peerObj.peer && !peerObj.peer.destroyed) {
+        try {
+          // Get the video track from the new stream
+          const videoTrack = newStream.getVideoTracks()[0];
+          if (videoTrack) {
+            console.log(`📹 Replacing video track for peer ${peerObj.peerID}`);
+            
+            // Get the current sender for video
+            const senders = peerObj.peer.getSenders();
+            const videoSender = senders.find(sender => 
+              sender.track && sender.track.kind === 'video'
+            );
+            
+            if (videoSender) {
+              // Replace the video track
+              await videoSender.replaceTrack(videoTrack);
+              console.log(`✅ Successfully replaced video track for peer ${peerObj.peerID}`);
+              successCount++;
+            } else {
+              console.warn(`⚠️ No video sender found for peer ${peerObj.peerID}`);
+              failureCount++;
+            }
+          } else {
+            console.warn('⚠️ No video track in new stream');
+            failureCount++;
+          }
+        } catch (error) {
+          console.error(`❌ Error replacing video track for peer ${peerObj.peerID}:`, error);
+          failureCount++;
+        }
+      }
+    }
+    
+    console.log(`📊 Track replacement results: ${successCount} success, ${failureCount} failures`);
+    
+    // If most replacements failed, fall back to recreating peers
+    if (failureCount > successCount && currentPeers.length > 0) {
+      console.log('🔄 Falling back to peer recreation due to track replacement failures');
+      await recreatePeersWithStream(newStream);
+    }
+  };
+
+  // Helper function to recreate peers with a new stream (fallback method)
   const recreatePeersWithStream = async (newStream) => {
     console.log('🔄 Recreating peers with new stream');
+    console.log('📹 New stream tracks:', newStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+    
     const currentPeers = [...peersRef.current];
     
     // Store peer information
@@ -627,13 +809,14 @@ export default function RoomPage({ roomId }) {
     setPeers([]);
     
     // Wait a bit for cleanup
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 200));
     
     // Recreate peers with new stream
     for (const info of peerInfo) {
       try {
-        const newPeer = createPeer(info.peerID, info.peerID, newStream, info.name, info.photo);
-        peersRef.current.push(newPeer);
+        const newPeer = createPeer(info.peerID, socketRef.current.id, newStream, info.name, info.photo);
+        const peerObj = { peerID: info.peerID, peer: newPeer, name: info.name, photo: info.photo };
+        peersRef.current.push(peerObj);
         console.log('✅ Recreated peer for:', info.peerID);
       } catch (error) {
         console.error('❌ Error recreating peer for:', info.peerID, error);
@@ -668,7 +851,21 @@ export default function RoomPage({ roomId }) {
 
   // --- UI ---
   return (
-    <Box sx={{ display: 'flex', height: '100vh', bgcolor: '#0f172a' }}>
+    <Box sx={{ 
+      display: 'flex', 
+      height: '100vh', 
+      bgcolor: '#0f172a',
+      '@keyframes slideDown': {
+        '0%': {
+          opacity: 0,
+          transform: 'translateX(-50%) translateY(-20px)'
+        },
+        '100%': {
+          opacity: 1,
+          transform: 'translateX(-50%) translateY(0)'
+        }
+      }
+    }}>
       {/* Main Content */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 3 }}>
         {/* Header */}
@@ -824,10 +1021,10 @@ export default function RoomPage({ roomId }) {
                   }} 
                 />
               )}
-              {isScreenSharing && (
+              {screenSharingUser && (
                 <Chip 
                   icon={<ScreenShareIcon />} 
-                  label="SCREEN SHARING" 
+                  label={`${screenSharingUser.name} SCREEN SHARING`}
                   size="small"
                   sx={{ 
                     bgcolor: '#10b981', 
@@ -839,6 +1036,75 @@ export default function RoomPage({ roomId }) {
               )}
             </Box>
             
+            {/* Screen sharing notification */}
+            {screenSharingUser && (
+              <Box sx={{ 
+                position: 'absolute', 
+                top: '50%', 
+                left: '50%', 
+                transform: 'translate(-50%, -50%)',
+                zIndex: 10
+              }}>
+                <Paper 
+                  sx={{ 
+                    px: 3, 
+                    py: 2, 
+                    borderRadius: 3, 
+                    background: 'rgba(16, 185, 129, 0.9)',
+                    backdropFilter: 'blur(10px)',
+                    color: 'white',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    boxShadow: '0 8px 32px rgba(16, 185, 129, 0.3)'
+                  }}
+                >
+                  <ScreenShareIcon />
+                  <Typography>
+                    {screenSharingUser.name} is sharing their screen
+                  </Typography>
+                </Paper>
+              </Box>
+            )}
+            
+            {/* Temporary notification */}
+            {screenShareNotification && (
+              <Box sx={{ 
+                position: 'absolute', 
+                top: 20, 
+                left: '50%', 
+                transform: 'translateX(-50%)',
+                zIndex: 20
+              }}>
+                <Paper 
+                  sx={{ 
+                    px: 3, 
+                    py: 2, 
+                    borderRadius: 3, 
+                    background: screenShareNotification.type === 'start' 
+                      ? 'rgba(16, 185, 129, 0.9)' 
+                      : 'rgba(239, 68, 68, 0.9)',
+                    backdropFilter: 'blur(10px)',
+                    color: 'white',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    boxShadow: screenShareNotification.type === 'start'
+                      ? '0 8px 32px rgba(16, 185, 129, 0.3)'
+                      : '0 8px 32px rgba(239, 68, 68, 0.3)',
+                    animation: 'slideDown 0.3s ease-out'
+                  }}
+                >
+                  <ScreenShareIcon />
+                  <Typography>
+                    {screenShareNotification.message}
+                  </Typography>
+                </Paper>
+              </Box>
+            )}
+            
             {/* Show participant name if pinned, otherwise show user name */}
             <Box sx={{ position: 'absolute', bottom: 16, left: 16 }}>
               <Paper 
@@ -849,10 +1115,25 @@ export default function RoomPage({ roomId }) {
                   background: 'rgba(0, 0, 0, 0.7)',
                   backdropFilter: 'blur(10px)',
                   color: 'white',
-                  fontWeight: 600
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1
                 }}
               >
-                {pinnedParticipant ? pinnedParticipant.name : user.name}
+                {pinnedParticipant ? (
+                  <>
+                    {pinnedParticipant.id !== 'local' && screenSharingUser && screenSharingUser.id === pinnedParticipant.id && (
+                      <ScreenShareIcon sx={{ fontSize: 16, color: '#10b981' }} />
+                    )}
+                    {pinnedParticipant.name}
+                  </>
+                ) : (
+                  <>
+                    {isScreenSharing && <ScreenShareIcon sx={{ fontSize: 16, color: '#10b981' }} />}
+                    {user.name}
+                  </>
+                )}
               </Paper>
             </Box>
           </Paper>
@@ -880,6 +1161,7 @@ export default function RoomPage({ roomId }) {
                   photo={peerObj.photo} 
                   id={peerObj.peerID}
                   isPinned={pinnedParticipant && pinnedParticipant.id === peerObj.peerID}
+                  isScreenSharing={peerObj.isScreenSharing || (screenSharingUser && screenSharingUser.id === peerObj.peerID)}
                   onPin={() => handlePinParticipant({ id: peerObj.peerID, name: peerObj.name, photo: peerObj.photo, stream: peerObj.stream })}
                 />
               ))}
@@ -1079,9 +1361,16 @@ export default function RoomPage({ roomId }) {
                   {p.name ? p.name[0] : '?'}
                 </Avatar>
                 
-                <Typography fontWeight={600} flex={1} sx={{ color: 'white' }}>
-                  {p.name}
-                </Typography>
+                <Box flex={1}>
+                  <Typography fontWeight={600} sx={{ color: 'white' }}>
+                    {p.name}
+                  </Typography>
+                  {screenSharingUser && screenSharingUser.id === p.id && (
+                    <Typography variant="caption" sx={{ color: '#10b981', fontWeight: 600 }}>
+                      Screen Sharing
+                    </Typography>
+                  )}
+                </Box>
                 
                 <Stack direction="row" spacing={1}>
                   <IconButton 
@@ -1109,6 +1398,21 @@ export default function RoomPage({ roomId }) {
                   >
                     <VideocamIcon fontSize="small" />
                   </IconButton>
+                  
+                  {screenSharingUser && screenSharingUser.id === p.id && (
+                    <IconButton 
+                      size="small" 
+                      sx={{ 
+                        color: '#10b981',
+                        bgcolor: 'rgba(16, 185, 129, 0.2)',
+                        '&:hover': {
+                          bgcolor: 'rgba(16, 185, 129, 0.3)'
+                        }
+                      }}
+                    >
+                      <ScreenShareIcon fontSize="small" />
+                    </IconButton>
+                  )}
                 </Stack>
               </Paper>
             ))}
@@ -1334,7 +1638,7 @@ export default function RoomPage({ roomId }) {
 }
 
 // Enhanced PeerVideo component with pinning functionality
-function PeerVideo({ stream, name, photo, id, isPinned, onPin }) {
+function PeerVideo({ stream, name, photo, id, isPinned, isScreenSharing, onPin }) {
   const videoRef = useRef();
   const [videoError, setVideoError] = useState(false);
 
@@ -1369,6 +1673,19 @@ function PeerVideo({ stream, name, photo, id, isPinned, onPin }) {
         videoRef.current.onerror = (e) => {
           console.error('❌ Video error for:', name, e);
           setVideoError(true);
+        };
+        
+        // Add more detailed event listeners for debugging
+        videoRef.current.oncanplay = () => {
+          console.log('🎬 Video can play for:', name);
+        };
+        
+        videoRef.current.onplaying = () => {
+          console.log('▶️ Video is playing for:', name);
+        };
+        
+        videoRef.current.onwaiting = () => {
+          console.log('⏳ Video is waiting for:', name);
         };
         
         // Try to play
@@ -1498,12 +1815,22 @@ function PeerVideo({ stream, name, photo, id, isPinned, onPin }) {
         >
           {name}
         </Typography>
-        <Box sx={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          bgcolor: videoError ? '#ef4444' : '#10b981'
-        }} />
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          {isScreenSharing && (
+            <ScreenShareIcon 
+              sx={{ 
+                fontSize: 12, 
+                color: '#10b981' 
+              }} 
+            />
+          )}
+          <Box sx={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            bgcolor: videoError ? '#ef4444' : '#10b981'
+          }} />
+        </Stack>
       </Box>
     </Box>
   );
