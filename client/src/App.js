@@ -4,7 +4,7 @@ import Login from './Login';
 import Dashboard from './Dashboard';
 import RoomPage from './RoomPage';
 import ScheduleMeeting from './components/ScheduleMeeting';
-import { Container, Box, Typography, Paper, Tabs, Tab, useTheme } from '@mui/material';
+import { Container, Box, Typography, Paper, Tabs, Tab } from '@mui/material';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { GOOGLE_CLIENT_ID } from './config/googleOAuth';
@@ -16,7 +16,6 @@ function AuthTabs() {
     return savedTab !== null ? Number(savedTab) : 1;
   };
   const [tab, setTab] = useState(getInitialTab);
-  const theme = useTheme();
 
   useEffect(() => {
     localStorage.setItem('authTab', tab);

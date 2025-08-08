@@ -74,7 +74,7 @@ export default function ScheduleMeeting() {
     if (user.name && !form.host) {
       setForm(prev => ({ ...prev, host: user.name }));
     }
-  }, [user.name]);
+  }, [user.name, form.host]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;

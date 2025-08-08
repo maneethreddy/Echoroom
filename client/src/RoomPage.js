@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import io from 'socket.io-client';
 import Peer from 'simple-peer';
 import {
-  Box, Avatar, Button, Typography, IconButton, Paper, Stack, TextField, Badge, Drawer,
-  Chip, Divider, useTheme, Tooltip
+  Box, Avatar, Button, Typography, IconButton, Paper, Stack, TextField, Drawer,
+  Chip, Divider, Tooltip
 } from '@mui/material';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import MicIcon from '@mui/icons-material/Mic';
@@ -12,9 +12,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import StopCircleIcon from '@mui/icons-material/StopCircle';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import SendIcon from '@mui/icons-material/Send';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import PeopleIcon from '@mui/icons-material/People';
-import SettingsIcon from '@mui/icons-material/Settings';
+
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
@@ -42,7 +40,9 @@ export default function RoomPage({ roomId }) {
   const peersRef = useRef([]);
   const socketRef = useRef();
   const user = JSON.parse(localStorage.getItem('user')) || { name: 'You', profilePicture: '' };
-  const theme = useTheme();
+
+  // ICE servers configuration
+
 
   // Check if screen sharing is available
   useEffect(() => {
@@ -344,9 +344,10 @@ export default function RoomPage({ roomId }) {
         }
       }
     };
-  }, [roomId, user.name, user.profilePicture]);
+  // eslint-disable-next-line no-use-before-define
+  }, [roomId, user.name, user.profilePicture, createPeer, addPeer, localStream, pinnedParticipant, screenStream]);
 
-  const iceServers = [
+  const iceServers = useMemo(() => [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
@@ -356,10 +357,10 @@ export default function RoomPage({ roomId }) {
       username: 'openrelayproject',
       credential: 'openrelayproject'
     }
-  ];
+  ], []);
 
   // FIXED: Enhanced createPeer with deduplication protection
-  function createPeer(userToSignal, callerID, stream, name, photo) {
+  const createPeer = useCallback((userToSignal, callerID, stream, name, photo) => {
     console.log('🔨 Creating peer for:', userToSignal, 'from', callerID);
     console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
     
@@ -474,10 +475,10 @@ export default function RoomPage({ roomId }) {
     });
     
     return peer;
-  }
+  }, [iceServers]);
 
   // FIXED: Enhanced addPeer with similar deduplication
-  function addPeer(incomingSignal, callerID, stream, name, photo) {
+  const addPeer = useCallback((incomingSignal, callerID, stream, name, photo) => {
     console.log('➕ Adding peer for:', callerID, name);
     console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
     
@@ -595,7 +596,7 @@ export default function RoomPage({ roomId }) {
     }
     
     return peer;
-  }
+  }, [iceServers]);
 
   // --- Controls ---
   const handleMicToggle = () => {

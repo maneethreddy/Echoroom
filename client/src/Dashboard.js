@@ -1,17 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   AppBar, Toolbar, Typography, Button, Box, Container, Avatar, Paper, Grid, Stack, IconButton,
-  Alert, Snackbar, CircularProgress, Chip, Divider, Tooltip
+  Alert, Snackbar, Chip, Tooltip
 } from '@mui/material';
 import VideoCameraFrontIcon from '@mui/icons-material/VideoCameraFront';
 import LinkIcon from '@mui/icons-material/Link';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import EventIcon from '@mui/icons-material/Event';
-import NotesIcon from '@mui/icons-material/Notes';
-import FolderIcon from '@mui/icons-material/Folder';
-import DescriptionIcon from '@mui/icons-material/Description';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import DownloadIcon from '@mui/icons-material/Download';
+
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -27,7 +23,6 @@ const MAIN_BG = '#f8fafc';
 const TEXT_DARK = '#1e293b';
 const TEXT_GRAY = '#64748b';
 const BORDER = '#e2e8f0';
-const PURPLE = '#667eea';
 
 const actionCardStyles = [
   { 
@@ -79,23 +74,13 @@ const actions = [
   },
 ];
 
-// Placeholder for recent meetings - will be replaced with real data
-const recentMeetings = [
-  { title: 'Team Standup', room: 'echo-team-001', time: 'Yesterday, 10:30 AM', status: 'completed' },
-  { title: 'Client Presentation', room: 'echo-client-042', time: 'Dec 28, 2:15 PM', status: 'completed' },
-  { title: 'Product Review', room: 'echo-prod-123', time: 'Dec 27, 4:00 PM', status: 'completed' },
-];
 
-const sharedFiles = [
-  { name: 'Q4_Presentation.pdf', date: 'Dec 28, 2024', icon: <DescriptionIcon sx={{ color: ACCENT }} />, size: '2.4 MB' },
-  { name: 'Meeting_Notes.docx', date: 'Dec 27, 2024', icon: <InsertDriveFileIcon sx={{ color: '#3b82f6' }} />, size: '1.2 MB' },
-  { name: 'Budget_Analysis.xlsx', date: 'Dec 26, 2024', icon: <FolderIcon sx={{ color: '#22c55e' }} />, size: '3.8 MB' },
-];
+
+
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [scheduledMeetings, setScheduledMeetings] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   
   // Extract user info from localStorage
@@ -452,7 +437,7 @@ export default function Dashboard() {
               ) : (
                 scheduledMeetings.map((meeting, i) => {
                   // Format the scheduled date
-                  const { dateStr, timeStr, isPast, isToday } = formatMeetingDate(meeting.scheduledDate);
+                  const { dateStr, timeStr, isPast } = formatMeetingDate(meeting.scheduledDate);
                   
                   // Determine status
                   let status = meeting.status;
