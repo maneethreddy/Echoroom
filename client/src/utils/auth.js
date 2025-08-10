@@ -60,7 +60,7 @@ export const refreshTokenIfNeeded = async () => {
   if (isTokenExpired(token)) {
     console.log('Token expired, redirecting to login');
     removeToken();
-    window.location.href = '/login';
+    window.location.href = '/auth';
     return false;
   }
   

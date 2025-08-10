@@ -21,6 +21,11 @@ const rooms = {};
 // This will hold all active rooms and their participants
 // Enhanced server.js - WebRTC signaling improvements
 // FIXED server.js - Prevent infinite signaling loops
+
+// Import models and services
+const Message = require('./models/message');
+const Room = require('./models/room');
+const geminiService = require('./services/geminiService');
 io.on("connection", (socket) => {
   console.log("🔌 New connection:", socket.id);
   
@@ -167,6 +172,180 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle chat messages
+  socket.on("send-message", async (data) => {
+    try {
+      const { roomId, text, messageType = 'user' } = data;
+      
+      if (!roomId || !text) {
+        console.warn(`⚠️ Invalid message data from ${socket.id}`);
+        return;
+      }
+
+      console.log(`💬 Message from ${socket.user?.name || 'Unknown'} in room ${roomId}: ${text}`);
+
+      // Save message to database
+      const message = new Message({
+        roomId,
+        senderId: socket.id,
+        senderName: socket.user?.name || 'Unknown',
+        senderPhoto: socket.user?.photo || '',
+        text,
+        messageType,
+        timestamp: new Date()
+      });
+
+      await message.save();
+      console.log(`💾 Message saved to database`);
+
+      // Broadcast message to room
+      io.to(roomId).emit("new-message", {
+        id: message._id,
+        roomId,
+        senderId: socket.id,
+        senderName: socket.user?.name || 'Unknown',
+        senderPhoto: socket.user?.photo || '',
+        text,
+        messageType,
+        timestamp: message.timestamp,
+        formattedTime: message.formattedTime
+      });
+
+      // If it's a user message and AI is enabled, generate AI response
+      if (messageType === 'user' && geminiService.isAvailable()) {
+        try {
+          console.log(`🤖 Generating AI response for: ${text}`);
+          
+          const aiResponse = await geminiService.generateResponse(text, `User ${socket.user?.name} said: ${text}`);
+          
+          if (aiResponse.success) {
+            // Save AI response to database
+            const aiMessage = new Message({
+              roomId,
+              senderId: 'ai-assistant',
+              senderName: 'AI Assistant',
+              senderPhoto: 'https://via.placeholder.com/40/4CAF50/FFFFFF?text=AI',
+              text: aiResponse.message,
+              messageType: 'ai',
+              aiModel: 'gemini',
+              timestamp: new Date()
+            });
+
+            await aiMessage.save();
+            console.log(`💾 AI response saved to database`);
+
+            // Send AI response to room
+            io.to(roomId).emit("new-message", {
+              id: aiMessage._id,
+              roomId,
+              senderId: 'ai-assistant',
+              senderName: 'AI Assistant',
+              senderPhoto: 'https://via.placeholder.com/40/4CAF50/FFFFFF?text=AI',
+              text: aiResponse.message,
+              messageType: 'ai',
+              timestamp: aiMessage.timestamp,
+              formattedTime: aiMessage.formattedTime
+            });
+          }
+        } catch (aiError) {
+          console.error(`❌ AI response generation failed:`, aiError);
+        }
+      }
+
+    } catch (error) {
+      console.error(`❌ Error handling message from ${socket.id}:`, error);
+    }
+  });
+
+  // Get message history for a room
+  socket.on("get-message-history", async (data) => {
+    try {
+      const { roomId, limit = 50 } = data;
+      
+      if (!roomId) {
+        console.warn(`⚠️ No roomId provided for message history`);
+        return;
+      }
+
+      console.log(`📚 Fetching message history for room ${roomId}`);
+      
+      const messages = await Message.find({ roomId })
+        .sort({ timestamp: -1 })
+        .limit(limit)
+        .lean();
+
+      // Reverse to show oldest first
+      const sortedMessages = messages.reverse();
+      
+      socket.emit("message-history", {
+        roomId,
+        messages: sortedMessages.map(msg => ({
+          ...msg,
+          formattedTime: new Date(msg.timestamp).toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          })
+        }))
+      });
+
+      console.log(`📤 Sent ${sortedMessages.length} messages to ${socket.id}`);
+
+    } catch (error) {
+      console.error(`❌ Error fetching message history:`, error);
+      socket.emit("message-history-error", { error: error.message });
+    }
+  });
+
+  // AI assistant commands
+  socket.on("ai-command", async (data) => {
+    try {
+      const { roomId, command, context } = data;
+      
+      if (!roomId || !command) {
+        console.warn(`⚠️ Invalid AI command data from ${socket.id}`);
+        return;
+      }
+
+      if (!geminiService.isAvailable()) {
+        socket.emit("ai-response", {
+          success: false,
+          message: "AI assistant is currently unavailable. Please try again later."
+        });
+        return;
+      }
+
+      console.log(`🤖 AI command from ${socket.user?.name || 'Unknown'}: ${command}`);
+
+      const aiResponse = await geminiService.generateResponse(command, context);
+      
+      socket.emit("ai-response", aiResponse);
+
+      if (aiResponse.success) {
+        // Save AI response to database
+        const aiMessage = new Message({
+          roomId,
+          senderId: 'ai-assistant',
+          senderName: 'AI Assistant',
+          senderPhoto: 'https://via.placeholder.com/40/4CAF50/FFFFFF?text=AI',
+          text: aiResponse.message,
+          messageType: 'ai',
+          aiModel: 'gemini',
+          timestamp: new Date()
+        });
+
+        await aiMessage.save();
+        console.log(`💾 AI command response saved to database`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Error handling AI command:`, error);
+      socket.emit("ai-response", {
+        success: false,
+        message: "Sorry, I encountered an error while processing your request."
+      });
+    }
+  });
+
   socket.on("error", (error) => {
     console.error(`❌ Socket error for ${socket.id}:`, error);
   });
@@ -194,8 +373,10 @@ app.get("/", (req, res) => {
 });
 const authRoutes = require("./routes/auth");
 const meetingRoutes = require("./routes/meetings");
+const roomRoutes = require("./routes/rooms");
 app.use("/api/auth", authRoutes);
 app.use("/api/meetings", meetingRoutes);
+app.use("/api/rooms", roomRoutes);
 
 const PORT = process.env.PORT || 8000;
 

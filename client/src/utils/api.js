@@ -41,7 +41,7 @@ api.interceptors.response.use(
       } catch (refreshError) {
         // If refresh fails, redirect to login
         removeToken();
-        window.location.href = '/login';
+        window.location.href = '/auth';
         return Promise.reject(refreshError);
       }
     }

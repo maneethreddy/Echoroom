@@ -20,12 +20,18 @@ import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 // Use environment variable or fallback to localhost
 const SOCKET_SERVER_URL = process.env.REACT_APP_SERVER_URL || 'http://localhost:8000';
 
+// Debug: Log the server URL being used
+console.log('🔌 SOCKET_SERVER_URL:', process.env.REACT_APP_SERVER_URL);
+console.log('🔌 Final SOCKET_SERVER_URL:', SOCKET_SERVER_URL);
+
 export default function RoomPage({ roomId }) {
   const [participants, setParticipants] = useState([]); // {id, name, photo, mic, cam}
   const [messages, setMessages] = useState([]); // {sender, text, time}
   const [peers, setPeers] = useState([]); // [{peerID, peer, name, photo, stream}]
   const [localStream, setLocalStream] = useState(null);
   const [screenStream, setScreenStream] = useState(null);
+  const [mediaError, setMediaError] = useState(null);
+  const [readyToJoin, setReadyToJoin] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
@@ -47,305 +53,22 @@ export default function RoomPage({ roomId }) {
   // Check if screen sharing is available
   useEffect(() => {
     setIsScreenSharingAvailable(!!navigator.mediaDevices.getDisplayMedia);
+    // Preflight permission check; if already granted, allow auto-join
+    (async () => {
+      try {
+        if (!navigator.permissions) return;
+        const cam = await navigator.permissions.query({ name: 'camera' });
+        const mic = await navigator.permissions.query({ name: 'microphone' });
+        if (cam.state === 'granted' && mic.state === 'granted') {
+          setReadyToJoin(true);
+        }
+      } catch (_) {
+        // Permissions API not supported; require user gesture
+      }
+    })();
   }, []);
 
-  // --- WebRTC & Socket.IO setup ---
-  // FIXED: Complete solution to prevent infinite loops and video conflicts
-  useEffect(() => {
-    let mounted = true;
-    let socket = null;
-    
-    socket = io(SOCKET_SERVER_URL);
-    socketRef.current = socket;
-    
-    console.log('🔌 Connecting to room:', roomId);
-    
-    navigator.mediaDevices.getUserMedia({ 
-      video: { width: 640, height: 480 }, 
-      audio: true 
-    })
-      .then(stream => {
-        if (!mounted) {
-          stream.getTracks().forEach(track => track.stop());
-          return;
-        }
-        
-        console.log('📹 Got local stream with tracks:', stream.getTracks().map(t => t.kind));
-        setLocalStream(stream);
-        
-        if (myVideo.current) {
-          myVideo.current.srcObject = stream;
-          const playPromise = myVideo.current.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(e => {
-              if (e.name !== 'AbortError') {
-                console.error('Local video play failed:', e);
-              }
-            });
-          }
-        }
-        
-        socket.emit('join-room', { 
-          roomId, 
-          user: { name: user.name, photo: user.profilePicture } 
-        });
-      })
-      .catch(err => {
-        console.error('❌ Error getting user media:', err);
-        alert('Camera/Microphone access required. Please refresh and allow permissions.');
-      });
-
-    socket.on('participants', (users) => {
-      console.log('👥 Received participants:', users);
-      if (mounted) {
-        setParticipants(users);
-      }
-    });
-
-    socket.on('chat-message', (msg) => {
-      if (mounted) setMessages(msgs => [...msgs, msg]);
-    });
-
-    // Screen sharing event handlers
-    socket.on('screen-share-started', (data) => {
-      if (mounted) {
-        console.log('🖥️ Screen sharing started by:', data.userName);
-        setScreenSharingUser({ id: data.userId, name: data.userName });
-        
-        // Automatically pin the screen sharing user's video
-        if (data.userId !== socket.id) {
-          // Find the peer who is screen sharing
-          const screenSharingPeer = peersRef.current.find(p => p.peerID === data.userId);
-          if (screenSharingPeer) {
-            setPinnedParticipant({
-              id: data.userId,
-              name: data.userName,
-              photo: screenSharingPeer.photo,
-              stream: screenSharingPeer.stream
-            });
-            console.log('📌 Automatically pinned screen sharing user:', data.userName);
-          }
-        }
-        
-        // Show notification
-        setScreenShareNotification({
-          message: `${data.userName} started screen sharing`,
-          type: 'start'
-        });
-        
-        // Auto-hide notification after 3 seconds
-        setTimeout(() => {
-          setScreenShareNotification(null);
-        }, 3000);
-        
-        setMessages(msgs => [...msgs, {
-          sender: 'System',
-          text: `${data.userName} started screen sharing`,
-          time: new Date().toLocaleTimeString(),
-          type: 'system'
-        }]);
-      }
-    });
-
-    socket.on('screen-share-stopped', (data) => {
-      if (mounted) {
-        console.log('🖥️ Screen sharing stopped by:', data.userId);
-        setScreenSharingUser(null);
-        
-        // Unpin the screen sharing user if they were pinned
-        if (pinnedParticipant && pinnedParticipant.id === data.userId) {
-          setPinnedParticipant(null);
-          console.log('📌 Unpinned screen sharing user:', data.userName);
-        }
-        
-        // Also clear local screen sharing state if it was us
-        if (data.userId === socket.id) {
-          setIsScreenSharing(false);
-        }
-        
-        // Show notification
-        setScreenShareNotification({
-          message: 'Screen sharing stopped',
-          type: 'stop'
-        });
-        
-        // Auto-hide notification after 3 seconds
-        setTimeout(() => {
-          setScreenShareNotification(null);
-        }, 3000);
-        
-        setMessages(msgs => [...msgs, {
-          sender: 'System',
-          text: 'Screen sharing stopped',
-          time: new Date().toLocaleTimeString(),
-          type: 'system'
-        }]);
-      }
-    });
-
-    // FIXED: Handle all-users event with proper deduplication
-    socket.on('all-users', users => {
-      console.log('🔗 Received all-users:', users);
-      if (!mounted) return;
-      
-      const currentStream = myVideo.current?.srcObject;
-      if (!currentStream) {
-        console.warn('⚠️ Local stream not ready yet');
-        return;
-      }
-      
-      // Clear existing peers first
-      console.log('🧹 Clearing existing peers');
-      peersRef.current.forEach(peerObj => {
-        if (peerObj.peer) {
-          try {
-            peerObj.peer.destroy();
-          } catch (e) {
-            console.warn('Error destroying peer:', e);
-          }
-        }
-      });
-      peersRef.current = [];
-      setPeers([]);
-      
-      // Create peers for all users (excluding self)
-      users.forEach(({ id, name, photo }) => {
-        if (id === socket.id) {
-          console.log('⏭️ Skipping self in peer creation:', id);
-          return;
-        }
-        
-        console.log('🔨 Creating peer for user:', id, name);
-        try {
-          const peer = createPeer(id, socket.id, currentStream, name, photo);
-          const peerObj = { peerID: id, peer, name, photo };
-          peersRef.current.push(peerObj);
-          console.log('✅ Created peer for:', id);
-        } catch (error) {
-          console.error('❌ Error creating peer for', id, ':', error);
-        }
-      });
-      
-      // Update peers state
-      setPeers([...peersRef.current]);
-    });
-
-    // FIXED: Handle user-joined with deduplication
-    socket.on('user-joined', payload => {
-      console.log('👋 User joined:', payload.callerID, payload.name);
-      if (!mounted) return;
-      
-      // CRITICAL FIX: Check if we already have a peer for this user
-      const existingPeer = peersRef.current.find(p => p.peerID === payload.callerID);
-      if (existingPeer) {
-        console.log('⚠️ Peer already exists for:', payload.callerID, '- skipping');
-        return;
-      }
-      
-      const currentStream = myVideo.current?.srcObject;
-      if (!currentStream) {
-        console.warn('⚠️ Local stream not ready for new user');
-        return;
-      }
-      
-      try {
-        const peer = addPeer(payload.signal, payload.callerID, currentStream, payload.name, payload.photo);
-        
-        const newPeerObj = { 
-          peerID: payload.callerID, 
-          peer, 
-          name: payload.name, 
-          photo: payload.photo 
-        };
-        peersRef.current.push(newPeerObj);
-        console.log('✅ Added new peer to peersRef:', payload.callerID);
-        
-        // Update peers state
-        setPeers([...peersRef.current]);
-        
-      } catch (error) {
-        console.error('❌ Error adding peer:', error);
-      }
-    });
-
-    socket.on('receiving-returned-signal', payload => {
-      console.log('📡 Receiving returned signal from:', payload.id);
-      const item = peersRef.current.find(p => p.peerID === payload.id);
-      if (item && item.peer) {
-        try {
-          item.peer.signal(payload.signal);
-          console.log('✅ Applied return signal to peer:', payload.id);
-        } catch (error) {
-          console.error('❌ Error applying return signal:', error);
-        }
-      } else {
-        console.warn('⚠️ Peer not found for return signal from:', payload.id);
-      }
-    });
-
-    // Add peer-signal event handler
-    socket.on('peer-signal', payload => {
-      console.log('📡 Received peer signal from:', payload.from, 'Type:', payload.signal.type);
-      const item = peersRef.current.find(p => p.peerID === payload.from);
-      if (item && item.peer && !item.peer.destroyed) {
-        try {
-          item.peer.signal(payload.signal);
-          console.log('✅ Applied peer signal from:', payload.from);
-        } catch (error) {
-          console.error('❌ Error applying peer signal:', error);
-        }
-      } else {
-        console.warn('⚠️ Peer not found or destroyed for signal from:', payload.from);
-      }
-    });
-
-    // Cleanup function
-    return () => { 
-      console.log('🧹 Cleaning up RoomPage');
-      mounted = false;
-      
-      peersRef.current.forEach(peerObj => {
-        if (peerObj.peer) {
-          try {
-            peerObj.peer.destroy();
-          } catch (e) {
-            console.warn('Error destroying peer during cleanup:', e);
-          }
-        }
-      });
-      peersRef.current = [];
-      
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          try {
-            track.stop();
-          } catch (e) {
-            console.warn('Error stopping track:', e);
-          }
-        });
-      }
-      
-      // Clean up screen sharing stream
-      if (screenStream) {
-        screenStream.getTracks().forEach(track => {
-          try {
-            track.stop();
-          } catch (e) {
-            console.warn('Error stopping screen track:', e);
-          }
-        });
-      }
-      
-      if (socket) {
-        try {
-          socket.disconnect();
-        } catch (e) {
-          console.warn('Error disconnecting socket:', e);
-        }
-      }
-    };
-  // eslint-disable-next-line no-use-before-define
-  }, [roomId, user.name, user.profilePicture, createPeer, addPeer, localStream, pinnedParticipant, screenStream]);
+  
 
   const iceServers = useMemo(() => [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -598,6 +321,326 @@ export default function RoomPage({ roomId }) {
     return peer;
   }, [iceServers]);
 
+  // --- WebRTC & Socket.IO setup ---
+  // Complete solution to prevent infinite loops and video conflicts
+  useEffect(() => {
+    if (!readyToJoin) {
+      return;
+    }
+    let mounted = true;
+    let socket = null;
+    
+    socket = io(SOCKET_SERVER_URL);
+    socketRef.current = socket;
+    
+    console.log('🔌 Connecting to room:', roomId);
+    console.log('🔌 Socket connected:', socket.connected);
+    console.log('🔌 Socket ID:', socket.id);
+    
+    // Add connection event listeners for debugging
+    socket.on('connect', () => {
+      console.log('✅ Socket connected successfully');
+      console.log('🔌 Socket ID after connection:', socket.id);
+    });
+    
+    socket.on('connect_error', (error) => {
+      console.error('❌ Socket connection error:', error);
+    });
+    
+    socket.on('disconnect', (reason) => {
+      console.log('🔌 Socket disconnected:', reason);
+    });
+
+    const ensureStreamAndJoin = async () => {
+      try {
+        let stream = localStream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480 }, 
+            audio: true,
+          });
+        if (!mounted) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        console.log('📹 Got local stream with tracks:', stream.getTracks().map(t => t.kind));
+        setLocalStream(stream);
+          setMediaError(null);
+        }
+        if (myVideo.current) {
+          myVideo.current.srcObject = stream;
+          const playPromise = myVideo.current.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(e => {
+              if (e.name !== 'AbortError') {
+                console.error('Local video play failed:', e);
+              }
+            });
+          }
+        }
+        socket.emit('join-room', { 
+          roomId, 
+          user: { name: user.name, photo: user.profilePicture },
+        });
+      } catch (err) {
+        console.error('❌ Error getting user media:', err);
+        setMediaError(err);
+      }
+    };
+
+    ensureStreamAndJoin();
+
+    socket.on('participants', (users) => {
+      console.log('👥 Received participants:', users);
+      if (mounted) {
+        setParticipants(users);
+      }
+    });
+
+    socket.on('chat-message', (msg) => {
+      if (mounted) setMessages(msgs => [...msgs, msg]);
+    });
+
+    // Screen sharing event handlers
+    socket.on('screen-share-started', (data) => {
+      if (mounted) {
+        console.log('🖥️ Screen sharing started by:', data.userName);
+        setScreenSharingUser({ id: data.userId, name: data.userName });
+        
+        // Automatically pin the screen sharing user's video
+        if (data.userId !== socket.id) {
+          // Find the peer who is screen sharing
+          const screenSharingPeer = peersRef.current.find(p => p.peerID === data.userId);
+          if (screenSharingPeer) {
+            setPinnedParticipant({
+              id: data.userId,
+              name: data.userName,
+              photo: screenSharingPeer.photo,
+              stream: screenSharingPeer.stream
+            });
+            console.log('📌 Automatically pinned screen sharing user:', data.userName);
+          }
+        }
+        
+        // Show notification
+        setScreenShareNotification({
+          message: `${data.userName} started screen sharing`,
+          type: 'start'
+        });
+        
+        // Auto-hide notification after 3 seconds
+        setTimeout(() => {
+          setScreenShareNotification(null);
+        }, 3000);
+        
+        setMessages(msgs => [...msgs, {
+          sender: 'System',
+          text: `${data.userName} started screen sharing`,
+          time: new Date().toLocaleTimeString(),
+          type: 'system'
+        }]);
+      }
+    });
+
+    socket.on('screen-share-stopped', (data) => {
+      if (mounted) {
+        console.log('🖥️ Screen sharing stopped by:', data.userId);
+        setScreenSharingUser(null);
+        
+        // Unpin the screen sharing user if they were pinned
+        if (pinnedParticipant && pinnedParticipant.id === data.userId) {
+          setPinnedParticipant(null);
+          console.log('📌 Unpinned screen sharing user:', data.userName);
+        }
+        
+        // Also clear local screen sharing state if it was us
+        if (data.userId === socket.id) {
+          setIsScreenSharing(false);
+        }
+        
+        // Show notification
+        setScreenShareNotification({
+          message: 'Screen sharing stopped',
+          type: 'stop'
+        });
+        
+        // Auto-hide notification after 3 seconds
+        setTimeout(() => {
+          setScreenShareNotification(null);
+        }, 3000);
+        
+        setMessages(msgs => [...msgs, {
+          sender: 'System',
+          text: 'Screen sharing stopped',
+          time: new Date().toLocaleTimeString(),
+          type: 'system'
+        }]);
+      }
+    });
+
+    // Handle all-users event with proper deduplication
+    socket.on('all-users', users => {
+      console.log('🔗 Received all-users:', users);
+      if (!mounted) return;
+      
+      const currentStream = myVideo.current?.srcObject;
+      if (!currentStream) {
+        console.warn('⚠️ Local stream not ready yet');
+        return;
+      }
+      
+      // Clear existing peers first
+      console.log('🧹 Clearing existing peers');
+      peersRef.current.forEach(peerObj => {
+        if (peerObj.peer) {
+          try {
+            peerObj.peer.destroy();
+          } catch (e) {
+            console.warn('Error destroying peer:', e);
+          }
+        }
+      });
+      peersRef.current = [];
+      setPeers([]);
+      
+      // Create peers for all users (excluding self)
+      users.forEach(({ id, name, photo }) => {
+        if (id === socket.id) {
+          console.log('⏭️ Skipping self in peer creation:', id);
+          return;
+        }
+        
+        console.log('🔨 Creating peer for user:', id, name);
+        try {
+          const peer = createPeer(id, socket.id, currentStream, name, photo);
+          const peerObj = { peerID: id, peer, name, photo };
+          peersRef.current.push(peerObj);
+          console.log('✅ Created peer for:', id);
+        } catch (error) {
+          console.error('❌ Error creating peer for', id, ':', error);
+        }
+      });
+      
+      // Update peers state
+      setPeers([...peersRef.current]);
+    });
+
+    // Handle user-joined with deduplication
+    socket.on('user-joined', payload => {
+      console.log('👋 User joined:', payload.callerID, payload.name);
+      if (!mounted) return;
+      
+      // Check if we already have a peer for this user
+      const existingPeer = peersRef.current.find(p => p.peerID === payload.callerID);
+      if (existingPeer) {
+        console.log('⚠️ Peer already exists for:', payload.callerID, '- skipping');
+        return;
+      }
+      
+      const currentStream = myVideo.current?.srcObject;
+      if (!currentStream) {
+        console.warn('⚠️ Local stream not ready for new user');
+        return;
+      }
+      
+      try {
+        const peer = addPeer(payload.signal, payload.callerID, currentStream, payload.name, payload.photo);
+        
+        const newPeerObj = { 
+          peerID: payload.callerID, 
+          peer, 
+          name: payload.name, 
+          photo: payload.photo 
+        };
+        peersRef.current.push(newPeerObj);
+        console.log('✅ Added new peer to peersRef:', payload.callerID);
+        
+        // Update peers state
+        setPeers([...peersRef.current]);
+        
+      } catch (error) {
+        console.error('❌ Error adding peer:', error);
+      }
+    });
+
+    socket.on('receiving-returned-signal', payload => {
+      console.log('📡 Receiving returned signal from:', payload.id);
+      const item = peersRef.current.find(p => p.peerID === payload.id);
+      if (item && item.peer) {
+        try {
+          item.peer.signal(payload.signal);
+          console.log('✅ Applied return signal to peer:', payload.id);
+        } catch (error) {
+          console.error('❌ Error applying return signal:', error);
+        }
+      } else {
+        console.warn('⚠️ Peer not found for return signal from:', payload.id);
+      }
+    });
+
+    // Add peer-signal event handler
+    socket.on('peer-signal', payload => {
+      console.log('📡 Received peer signal from:', payload.from, 'Type:', payload.signal.type);
+      const item = peersRef.current.find(p => p.peerID === payload.from);
+      if (item && item.peer && !item.peer.destroyed) {
+        try {
+          item.peer.signal(payload.signal);
+          console.log('✅ Applied peer signal from:', payload.from);
+        } catch (error) {
+          console.error('❌ Error applying peer signal:', error);
+        }
+      } else {
+        console.warn('⚠️ Peer not found or destroyed for signal from:', payload.from);
+      }
+    });
+
+    // Cleanup function
+    return () => { 
+      console.log('🧹 Cleaning up RoomPage');
+      mounted = false;
+      
+      peersRef.current.forEach(peerObj => {
+        if (peerObj.peer) {
+          try {
+            peerObj.peer.destroy();
+          } catch (e) {
+            console.warn('Error destroying peer during cleanup:', e);
+          }
+        }
+      });
+      peersRef.current = [];
+      
+      if (localStream) {
+        localStream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn('Error stopping track:', e);
+          }
+        });
+      }
+      
+      // Clean up screen sharing stream
+      if (screenStream) {
+        screenStream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn('Error stopping screen track:', e);
+          }
+        });
+      }
+      
+      if (socket) {
+        try {
+          socket.disconnect();
+        } catch (e) {
+          console.warn('Error disconnecting socket:', e);
+        }
+      }
+    };
+  }, [roomId, user.name, user.profilePicture, createPeer, addPeer, localStream, pinnedParticipant, screenStream, readyToJoin]);
+
   // --- Controls ---
   const handleMicToggle = () => {
     if (localStream) {
@@ -626,6 +669,26 @@ export default function RoomPage({ roomId }) {
   
   const handleEndCall = () => {
     window.location.href = '/';
+  };
+
+  const retryGetUserMedia = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 },
+        audio: true,
+      });
+      setLocalStream(stream);
+      setMediaError(null);
+      if (myVideo.current) {
+        myVideo.current.srcObject = stream;
+        await myVideo.current.play().catch(() => {});
+      }
+      // Trigger main effect to set up socket and join
+      setReadyToJoin(true);
+    } catch (err) {
+      console.error('Retry getUserMedia failed:', err);
+      setMediaError(err);
+    }
   };
 
   const handleScreenShare = async () => {
@@ -868,6 +931,43 @@ export default function RoomPage({ roomId }) {
         }
       }
     }}>
+      {mediaError && (
+        <Box sx={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          bgcolor: 'rgba(15, 23, 42, 0.98)',
+          color: 'white',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          p: 4,
+          zIndex: 2000,
+        }}>
+          <Typography variant="h5" fontWeight={700} sx={{ mb: 2 }}>
+            Camera/Microphone access required
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 3, color: 'rgba(255,255,255,0.8)', maxWidth: 640, textAlign: 'center' }}>
+            Please allow access to your camera and microphone to join the room. Check your browser’s address bar for a permissions icon.
+          </Typography>
+          <Stack direction="row" spacing={2}>
+            <Button variant="contained" color="primary" onClick={retryGetUserMedia} startIcon={<VideocamIcon />}>
+              Try again
+            </Button>
+            <Button variant="outlined" color="inherit" onClick={() => window.location.reload()} startIcon={<StopCircleIcon />}>
+              Refresh
+            </Button>
+          </Stack>
+          {mediaError && (
+            <Typography variant="caption" sx={{ mt: 2, color: 'rgba(255,255,255,0.6)' }}>
+              {mediaError.name || 'Error'}: {mediaError.message || 'Permission denied'}
+            </Typography>
+          )}
+        </Box>
+      )}
       {/* Main Content */}
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 3 }}>
         {/* Header */}

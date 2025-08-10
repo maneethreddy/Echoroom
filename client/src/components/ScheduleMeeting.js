@@ -166,14 +166,14 @@ export default function ScheduleMeeting() {
         }
         
         // If token is invalid, redirect to login
-        if (errorMessage.includes('Invalid or expired token') || 
-            errorMessage.includes('Authentication required') ||
-            errorMessage.includes('Session expired')) {
-          removeToken();
-          setTimeout(() => {
-            window.location.href = '/login';
-          }, 2000);
-        }
+          if (errorMessage.includes('Invalid or expired token') || 
+              errorMessage.includes('Authentication required') ||
+              errorMessage.includes('Session expired')) {
+            removeToken();
+            setTimeout(() => {
+              window.location.href = '/auth';
+            }, 2000);
+          }
         
         showSnackbar(errorMessage, 'error');
         console.error('Error scheduling meeting:', err);

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   AppBar, Toolbar, Typography, Button, Box, Container, Avatar, Paper, Grid, Stack, IconButton,
-  Alert, Snackbar, Chip, Tooltip
+  Alert, Snackbar, Chip, Tooltip, Tabs, Tab
 } from '@mui/material';
 import VideoCameraFrontIcon from '@mui/icons-material/VideoCameraFront';
 import LinkIcon from '@mui/icons-material/Link';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import EventIcon from '@mui/icons-material/Event';
+import HomeIcon from '@mui/icons-material/Home';
+import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -16,6 +18,8 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import api from './utils/api';
 import { getToken, isTokenExpired, removeToken } from './utils/auth';
+import RoomList from './components/RoomList';
+import CreateRoom from './components/CreateRoom';
 
 const ACCENT = '#667eea';
 const CARD_BG = '#ffffff';
@@ -82,6 +86,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [scheduledMeetings, setScheduledMeetings] = useState([]);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [activeTab, setActiveTab] = useState(0);
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
   
   // Extract user info from localStorage
   let user = { name: '', email: '', photo: '' };
@@ -98,7 +104,7 @@ export default function Dashboard() {
 
   const logout = () => {
     removeToken();
-    window.location.href = '/login';
+    window.location.href = '/auth';
   };
 
   // Generate a random room ID
@@ -182,7 +188,7 @@ export default function Dashboard() {
       
       if (isTokenExpired(token)) {
         removeToken();
-        window.location.href = '/login';
+        window.location.href = '/auth';
         return;
       }
 
@@ -192,7 +198,7 @@ export default function Dashboard() {
       console.error('Error fetching meetings:', err);
       if (err.response?.data?.msg?.includes('Invalid or expired token')) {
         removeToken();
-        window.location.href = '/login';
+        window.location.href = '/auth';
       }
     }
   };
