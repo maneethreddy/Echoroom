@@ -30,8 +30,28 @@ io.on("connection", (socket) => {
   console.log("🔌 New connection:", socket.id);
   
   socket.on("join-room", ({ roomId, user }) => {
-    console.log(`👋 ${user.name} (${socket.id}) joined room ${roomId}`);
+    console.log(`👋 ${user.name} (${socket.id}) joining room ${roomId}`);
     
+    // Leave any previous room first
+    if (socket.roomId && rooms[socket.roomId]) {
+      const prevRoom = rooms[socket.roomId];
+      const userIndex = prevRoom.findIndex(u => u.id === socket.id);
+      if (userIndex !== -1) {
+        prevRoom.splice(userIndex, 1);
+        console.log(`👋 ${user.name} left room ${socket.roomId}`);
+        
+        // Notify other users in the previous room
+        io.to(socket.roomId).emit("participants", prevRoom);
+        
+        // Clean up empty rooms
+        if (prevRoom.length === 0) {
+          delete rooms[socket.roomId];
+          console.log(`🗑️ Room ${socket.roomId} deleted (empty)`);
+        }
+      }
+    }
+    
+    // Join the new room
     socket.join(roomId);
     
     if (!rooms[roomId]) {
@@ -45,19 +65,20 @@ io.on("connection", (socket) => {
       return;
     }
     
-    rooms[roomId].push({ id: socket.id, ...user });
+    // Add user to room
+    const userInfo = { id: socket.id, ...user };
+    rooms[roomId].push(userInfo);
+    socket.roomId = roomId;
+    socket.user = user;
 
     // Send existing users to the new user
     const otherUsers = rooms[roomId].filter(u => u.id !== socket.id);
     console.log(`📤 Sending ${otherUsers.length} existing users to ${socket.id}`);
     socket.emit("all-users", otherUsers);
 
-    // Broadcast updated participants
+    // Broadcast updated participants to all users in the room
     console.log(`📡 Broadcasting participants to room ${roomId}`);
     io.to(roomId).emit("participants", rooms[roomId]);
-
-    socket.roomId = roomId;
-    socket.user = user;
     
     console.log(`📊 Room ${roomId} users: [${rooms[roomId].map(u => `${u.name}(${u.id})`).join(', ')}]`);
   });
@@ -157,19 +178,34 @@ io.on("connection", (socket) => {
     
     const roomId = socket.roomId;
     if (roomId && rooms[roomId]) {
+      const userInfo = rooms[roomId].find(u => u.id === socket.id);
       const beforeCount = rooms[roomId].length;
+      
+      // Remove user from room
       rooms[roomId] = rooms[roomId].filter(u => u.id !== socket.id);
       
-      console.log(`📊 Room ${roomId}: ${beforeCount} -> ${rooms[roomId].length} users`);
+      console.log(`📊 Room ${roomId}: ${userInfo?.name || 'Unknown'} left, ${beforeCount} -> ${rooms[roomId].length} users`);
       
       if (rooms[roomId].length > 0) {
+        // Notify remaining users about the departure
         io.to(roomId).emit("participants", rooms[roomId]);
         console.log(`📡 Updated participants sent to room ${roomId}`);
+        
+        // Also notify about user leaving for UI updates
+        io.to(roomId).emit("user-left", {
+          userId: socket.id,
+          userName: userInfo?.name || 'Unknown'
+        });
       } else {
+        // Room is empty, clean it up
         delete rooms[roomId];
         console.log(`🧹 Deleted empty room ${roomId}`);
       }
     }
+    
+    // Clear socket references
+    socket.roomId = null;
+    socket.user = null;
   });
 
   // Handle chat messages
